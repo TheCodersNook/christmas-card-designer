@@ -230,6 +230,16 @@ class Block:
             return self.size, int(self.size * 0.25)
 
 
+def _line_height(font: ImageFont.FreeTypeFont, size: float, spacing: float) -> float:
+    """Real line height: script faces reach far past their nominal size, and an
+    extra line of separation is what keeps a name off the greeting above it."""
+    try:
+        ascent, descent = font.getmetrics()
+    except Exception:
+        ascent, descent = int(size), int(size * 0.25)
+    return max(size * spacing, (ascent + descent) * 1.02)
+
+
 def fit(text: str, role: str, family: str, weight: int, italic: bool, uppercase: bool,
         tracking_em: float, line_spacing: float, width: float, height: float,
         max_size: float, min_size: float = 0.0, max_lines: int = 8,
@@ -253,7 +263,7 @@ def fit(text: str, role: str, family: str, weight: int, italic: bool, uppercase:
     for _ in range(11):
         mid = (lo + hi) / 2
         font, lines, tracking = build(mid)
-        lh = mid * line_spacing
+        lh = _line_height(font, mid, line_spacing)
         widest = max((measure(l, font, tracking) for l in lines), default=0.0)
         if lines and len(lines) <= max_lines and len(lines) * lh <= height + 0.5 and widest <= width + 0.5:
             best = Block(role, font, int(round(mid)), lines, lh, tracking, align)
@@ -264,7 +274,7 @@ def fit(text: str, role: str, family: str, weight: int, italic: bool, uppercase:
         return best
 
     font, lines, tracking = build(min_size)
-    lh = min_size * line_spacing
+    lh = _line_height(font, min_size, line_spacing)
     truncated = False
     if len(lines) > max_lines:
         lines = lines[:max_lines]
@@ -301,7 +311,8 @@ def fit_stack(roles: list[tuple[str, str]], zones_style: config.Style, width: fl
         for role, text in items:
             size = ROLE_SIZES.get(role, 0.03) * short * scale * k
             family = family_for(role)
-            uppercase = role in ("greeting", "family", "year") and style.caps
+            # Capitals belong to the roman faces; a script name is never shouted.
+            uppercase = role in ("greeting", "family", "year") and style.caps and family != style.script
             tracking = style.tracking if role in ("greeting", "family", "year") else 0.0
             weight = style.weight if role in ("greeting", "family") else 400
             # Never break a word: cap the size so the longest word fits the zone.
