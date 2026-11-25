@@ -22,6 +22,7 @@ ROOT = project_root()
 FONT_DIR = ROOT / "assets" / "fonts"
 SKILL_DIR = Path(__file__).resolve().parents[2]   # .opencode/skills/christmas-card
 CARDS_DIR = ROOT / "cards"
+DECKS_DIR = ROOT / "decks"
 
 BLEED_IN = 0.125
 MIN_DPI, MAX_DPI = 96, 1200

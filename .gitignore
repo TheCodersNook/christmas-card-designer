@@ -3,6 +3,8 @@ inputs/*
 !inputs/.keep
 cards/*
 !cards/.keep
+decks/*
+!decks/.keep
 assets/fonts/
 assets/*
 !assets/.keep
