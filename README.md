@@ -1,12 +1,12 @@
 # Christmas Card Studio
 
-Your photographs, your words, a card you can actually print.
+Your photographs, your words: a card you can print, a presentation you can project.
 
 An [OpenCode](https://opencode.ai) project that turns your family photographs into
-print-ready Christmas cards: six designs composed for you, eight styles, five trim
-sizes, and a true-size 300 DPI PDF with bleed and crop marks. Everything runs on
-your own computer. No account, no upload, no cloud service, no image ever leaves
-the machine.
+print-ready Christmas cards - six designs composed for you, eight styles, five trim
+sizes, a true-size 300 DPI PDF with bleed and crop marks - and into a 16:9
+presentation from the same pictures. Everything runs on your own computer. No
+account, no upload, no cloud service, no image ever leaves the machine.
 
 The design judgement lives in a small deterministic engine (Python, Pillow,
 ReportLab), not in the model. That means a free OpenCode model is enough: it runs
@@ -92,6 +92,37 @@ All six are deterministic: no random layouts, no model deciding where a
 photograph goes. The planner scores every candidate, throws away designs that
 cannot place every photograph, and keeps the strongest spread.
 
+## Presentations
+
+The same photographs and words can become a presentation: 16:9, composed slide by
+slide for a screen or a projector, with no bleed, no crop marks and no back page.
+
+```
+$ ./ccb deck make inputs/*.jpg --name hayes-2026 \
+      --title "The Hayes Family" --subtitle "2026 in photographs" \
+      --greeting "Merry Christmas" \
+      --message "A year of small adventures and a great deal of snow." \
+      --signature "with love, Anna and Tom" --year 2026
+
+  6 slides: cover, statement, photograph x2, gallery, closing
+gate: 0 errors
+  out/hayes-2026.pdf - 6 slides at 13.33 x 7.50 in, 4303 KB
+qa: PASS
+```
+
+| Slide | What it does |
+| --- | --- |
+| **Cover** | Title, greeting, subtitle and year on paper, with the best photograph full height beside it. |
+| **Statement** | One message held large on an empty page - the line people remember. |
+| **Photograph** | A numbered plate: one picture at full height, a caption when you wrote one. |
+| **Gallery** | The remaining photographs in a two- or three-column grid. |
+| **Closing** | A script signature, the greeting, the year and a pair of rules. |
+
+The plan is deterministic and every photograph appears exactly once: the cover
+takes the strongest picture, the next two get a slide each, the rest become a
+gallery. Add `--png` to the render and you also get `out/slides/slide-01.png`
+and so on, for Keynote, PowerPoint or Google Slides.
+
 ## The eight styles
 
 | Style | Look |
@@ -106,7 +137,8 @@ cannot place every photograph, and keeps the strongest spread.
 | **Photo-First** | Nearly all photographs, a thin rule, one small line of type. |
 
 Six palettes - evergreen, cranberry, midnight, nordic, brass, peppermint - and
-five trim sizes: 5 x 7, 4 x 6, 5 x 5, A6 and A2, portrait or landscape.
+five trim sizes: 5 x 7, 4 x 6, 5 x 5, A6 and A2, portrait or landscape. The same
+styles and palettes dress a presentation, so a card and its deck match.
 
 ## Paper and print
 
@@ -125,7 +157,8 @@ in the printer's RIP.
 `./ccb qa` reads the exported files back - real PDF page boxes, page count, PNG
 pixel dimensions and DPI metadata - instead of trusting the render. `./ccb check`
 gates every design first: no text over a photograph, no photograph used far above
-its own resolution, measured contrast on every text block.
+its own resolution, measured contrast on every text block. `./ccb deck qa` does
+the same for a presentation.
 
 ## In OpenCode
 
@@ -135,13 +168,16 @@ its own resolution, measured contrast on every text block.
 4. Look at `cards/<name>/out/designs.jpg` and choose a number.
 5. `/fix use design 2, shorter message, midnight palette` - or just do it yourself.
 
-`/status` lists every card and its files, `/styles` shows the looks and papers.
+For the presentation instead, type `/presentation inputs/*.jpg --title "The Hayes
+Family"`, look at `decks/<name>/out/slides.jpg`, then use `/fix` for changes:
+the same command repairs a card or a deck. `/status` lists both, `/styles` shows
+the looks and papers.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `./ccb doctor` | Python, packages, fonts, how many cards exist |
+| `./ccb doctor` | Python, packages, fonts, how many cards and decks exist |
 | `./ccb fonts` | download the OFL fonts into `assets/fonts/` |
 | `./ccb samples` | draw six demo illustrations into `inputs/` |
 | `./ccb add <photo>...` | copy photographs into `inputs/` with safe names |
@@ -153,13 +189,16 @@ its own resolution, measured contrast on every text block.
 | `./ccb render [card] --design N` | write the print files and verify them |
 | `./ccb qa [card]` | verify the exported files, write `out/qa.md` |
 | `./ccb make <photo>...` | plan, gate, sheet, export and QA in one go |
+| `./ccb deck make <photo>...` | a 16:9 presentation: plan, gate, sheet, PDF and QA in one go |
+| `./ccb deck new/check/sheet/render/qa` | the presentation steps one at a time |
+| `./ccb deck render --png` | the PDF plus one PNG per slide |
 | `./ccb status` / `styles` / `sizes` | what exists and what it can print |
 | `./ccb selftest` | end-to-end test with generated photographs |
 
 ## What is in here
 
 ```
-christmas-card-designer/
+christmas-card-studio/
 ├── AGENTS.md                    the workflow the AI follows
 ├── PROMPT.md                    what to type in OpenCode
 ├── setup.sh                     one-time setup (packages + fonts)
@@ -167,17 +206,18 @@ christmas-card-designer/
 ├── opencode.json                what the agent may run without asking
 ├── inputs/                      your photographs (never modified, never committed)
 ├── cards/<name>/                one card: card.json, report.md, out/
+├── decks/<name>/                one presentation: deck.json, report.md, out/
 └── .opencode/
-    ├── commands/                /card, /fix, /status, /styles
+    ├── commands/                /card, /presentation, /fix, /status, /styles
     └── skills/christmas-card/
         ├── SKILL.md             the studio's taste and rules
         ├── reference/           STYLE.md, PLAN.md (schema + every command)
-        └── scripts/ccstudio/    the engine: layouts, type, decoration, export
+        └── scripts/ccstudio/    the engine: layouts, deck, type, decoration, export
 ```
 
-`card.json` is the only file you edit: photographs, words, style, paper, export
-settings. The engine writes the designs, the report, the contact sheet and the
-print files.
+`card.json` (or `deck.json`) is the only file you edit: photographs, words, style,
+paper or screen, export settings. The engine writes the designs, the report, the
+contact sheet and the print or presentation files.
 
 ## Honest limits
 
@@ -188,15 +228,19 @@ print files.
 - **A small photograph stays small.** The gate warns when a picture is being used
   far above its own resolution; it cannot invent detail.
 - **2 to 20 photographs.** One is a portrait, fifty is a contact sheet; the
-  layouts are built for family-card numbers.
+  layouts are built for family-card numbers. A one-photograph deck still works:
+  cover, statement, closing.
+- **Presentations are PDFs, not `.pptx`.** 16:9 at 13.33 x 7.5 in, 150 DPI, plus
+  one PNG per slide when you ask for them. Import those images into Keynote,
+  PowerPoint or Google Slides if you need to edit the deck there.
 - **No CMYK.** The PDF is RGB at the right physical size.
 - **The fonts are downloaded, not stored here** (SIL Open Font License, about
   6 MB). `./ccb fonts` fetches them once; until then a system font is used.
 - **The demo photographs are flat illustrations** drawn by `./ccb samples`, so
   the project ships without stock pictures or strangers' faces.
-- **You cannot see the card through the agent.** It reports what the gate
-  measured; looking at `out/designs.jpg` and the PDF is your job - and the reason
-  the contact sheet exists.
+- **You cannot see the card or the slides through the agent.** It reports what
+  the gate measured; looking at `out/designs.jpg`, `out/slides.jpg` and the PDF is
+  your job - and the reason the contact sheets exist.
 
 ## Credits
 
