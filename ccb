@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# ccb: the Christmas card engine from this project.
+#   ./ccb doctor | samples | add <photos> | new <photos> --name x | auto | check | sheet | render | qa | status
+#   ./ccb make <photos...>            the whole job in one command
+# The engine lives inside the skill; this script makes sure it runs with the
+# project's Python and the project folder as its home.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SKILL="${CCSTUDIO_SKILL:-$HERE/.opencode/skills/christmas-card}"
+
+if [ ! -d "$SKILL/scripts/ccstudio" ]; then
+  echo "The christmas-card skill is missing at $SKILL (it ships in .opencode/skills/)." >&2
+  exit 1
+fi
+
+export CCSTUDIO_HOME="$HERE"
+export PYTHONPATH="$SKILL/scripts${PYTHONPATH:+:$PYTHONPATH}"
+# Keep numerical libraries from grabbing every core; a card render is small.
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+cd "$HERE"
+
+if [ -x "$HERE/.venv/bin/python" ]; then
+  exec "$HERE/.venv/bin/python" -m ccstudio "$@"
+elif [ -x "$HERE/.venv/Scripts/python.exe" ]; then
+  exec "$HERE/.venv/Scripts/python.exe" -m ccstudio "$@"
+elif command -v uv >/dev/null 2>&1; then
+  exec uv run --project "$HERE" --quiet python -m ccstudio "$@"
+elif command -v python3 >/dev/null 2>&1; then
+  exec python3 -m ccstudio "$@"
+else
+  echo "Python 3 is not installed. Install it, then run ./setup.sh." >&2
+  exit 1
+fi

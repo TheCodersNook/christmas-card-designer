@@ -1,0 +1,17 @@
+# your photographs and your cards stay on your computer
+inputs/*
+!inputs/.keep
+cards/*
+!cards/.keep
+assets/fonts/
+assets/*
+!assets/.keep
+
+# outputs and caches
+out/
+*.pyc
+__pycache__/
+.venv/
+venv/
+.DS_Store
+Thumbs.db
