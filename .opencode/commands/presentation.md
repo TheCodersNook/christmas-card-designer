@@ -10,11 +10,14 @@ Make a 16:9 presentation from the photographs in this message (or `inputs/`).
 2. `./ccb deck brief decks/<name>` and read it, plus `studio/RULES.md`.
 3. `./ccb deck see decks/<name>`; open `out/see/photos.jpg` if your model can
    read images, otherwise read `visual.md` and say so.
-4. Write `slides.json`: `{"slides": [ ... ]}`. Every slide is a composition —
-   there are no slide kinds. A good rhythm is cover, one photograph per slide,
-   a statement, a gallery for the rest, a closing, with every photograph used
-   once and no more than six in a gallery. Captions and page numbers go in a
-   zone's `text` field.
+4. Write `slides.json`: `{"slides": [ ... ]}`. Every slide is a composition you
+   write from scratch — there are no slide kinds and the engine adds nothing you
+   did not declare. No two slides should share a skeleton: vary the background
+   (including a full-bleed photograph behind a scrim), the column, the crop
+   shape, the scale of the type. A good rhythm is cover, one photograph per
+   slide, a statement, a gallery for the rest, a closing, with every photograph
+   used once and no more than six in a gallery. Captions and page numbers go in
+   a zone's `text` field.
 5. `./ccb deck layout decks/<name> --file slides.json`. Fix every error and
    retry; read the warnings.
 6. `./ccb deck check decks/<name>` until 0 errors.

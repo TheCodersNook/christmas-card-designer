@@ -102,7 +102,7 @@ def check(spec: CardSpec, design: layouts.Design | None = None, dpi: int = 300) 
         "design": design.label,
         "engine": "composition",
         "photos": len(spec.photo_paths),
-        "coverage": round(design.coverage, 3),
+        "coverage": round(design.coverage + (1.0 if design.background.get("photo") is not None else 0.0), 3),
         "card_in": list(spec.card_inches),
         "style": spec.style.label,
         "palette": spec.palette.label,
@@ -132,7 +132,8 @@ def check_card(spec: CardSpec, dpi: int = 300) -> dict[str, Any]:
         report["warnings"] += photo_resolution(spec, front, dpi)
         report["facts"].update({
             "design": front.label, "engine": "composition",
-            "photos": len(spec.photo_paths), "coverage": round(front.coverage, 3),
+            "photos": len(spec.photo_paths),
+            "coverage": round(front.coverage + (1.0 if front.background.get("photo") is not None else 0.0), 3),
             "card_in": list(spec.card_inches), "style": spec.style.label,
             "palette": spec.palette.label, "dpi": dpi,
         })

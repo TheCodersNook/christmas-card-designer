@@ -28,13 +28,19 @@ designs; the gate refuses what breaks the rules.
 
 ## Compose
 
-Write two or three fronts and one back as JSON. A slot is
-`{photo, x, y, w, h, treatment?, focus?}`. A zone is
-`{roles, x, y, w, h, align?, valign?, font?, scale?, caps?, panel?, text?}`.
-Ornaments are `{kind, density}`; rules are `{x1, y1, x2, y2, token, weight}`.
+Write two or three fronts and one back as JSON. A page is a background
+(`{photo, scrim, scrim_from, scrim_reach}` or `{fill}` or `{gradient}`), shapes
+(`{kind, x, y, w, h, fill, opacity, rotate, layer}`), slots
+(`{photo, x, y, w, h, treatment?, focus?, clip?, rotate?, layer?, bleed?}`),
+zones (`{roles, x, y, w, h, align?, valign?, font?, scale?, caps?, panel?,
+color?, rotate?, layer?, over_photo?, text?}`), rules and optional `chrome`.
+Everything takes a `layer`.
 
 - Coordinates are fractions from the top-left of the trim page.
-- Text never overlaps a photograph; the gate rejects it.
+- The engine adds no chrome: no border, decoration or texture unless asked.
+- Text sits on paper unless the zone says `over_photo`; then it is coloured for
+  the photograph underneath. Two zones never overlap.
+- Make each front a different idea; the gate warns about repeated skeletons.
 - Let the faces choose the crop (omit `focus`) unless you have a better idea.
 - Follow a direction for coherence, then depart once: a zone's `scale`, `font`,
   `caps`, `align`, a panel, an ornament, a rule.

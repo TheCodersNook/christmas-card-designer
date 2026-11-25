@@ -172,7 +172,7 @@ class _View:
 
 def render_slide(spec: DeckSpec, comp: dict[str, Any], dpi: int, page: int = 1) -> render.RenderResult:
     return render.render_front(_View(spec, page), compose.design(comp), dpi, bleed=False,
-                               texture=spec.style.texture, page=f"slide {page}")
+                               texture=None, page=f"slide {page}")
 
 
 def install(spec: DeckSpec, payload: Any, append: bool = False) -> tuple[list[compose.Issue], int]:
@@ -221,13 +221,17 @@ def brief(spec: DeckSpec) -> str:
     lines += [
         "",
         "## What to write",
-        "Write every slide yourself: there are no slide kinds to pick from. A deck reads well",
-        "with a cover (title + one large photograph), one slide per strong photograph, a",
-        "statement slide, a gallery slide for the rest, and a closing. Use no more than six",
-        "photographs in one gallery. Every photograph should appear once.",
-        "Each slide is {name, slots, zones, ornaments, lines}; use a zone's 'text' field for",
-        "captions and page numbers. Coordinates are fractions of the 16:9 page; faces are",
-        "kept whole by the face-aware crop. ./ccb deck layout validates before saving.",
+        "Write every slide yourself: there are no slide kinds to pick from, and the engine",
+        "draws only what you declare (no frame, no decoration, no texture unless asked).",
+        "Two slides should not share a skeleton: vary the background, the column, the crop",
+        "shape, the scale of the type. A deck reads well with a cover, one slide per strong",
+        "photograph, a statement, a gallery for the rest and a closing - that is advice.",
+        "Every photograph should appear once; no more than six in one gallery.",
+        "Each slide is {name, background, shapes, slots, zones, ornaments, lines, chrome};",
+        "use a zone's 'text' field for captions and page numbers. A full-bleed photograph",
+        "behind a scrim, with the title on it ('over_photo': true), is the strongest cover.",
+        "Coordinates are fractions of the 16:9 page; faces are kept whole by the",
+        "face-aware crop. ./ccb deck layout validates before saving.",
         "",
         "Then ./ccb deck check, ./ccb deck see, ./ccb deck render, ./ccb deck qa.",
         "",

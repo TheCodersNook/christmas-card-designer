@@ -12,11 +12,15 @@ Make a Christmas card from the photographs in this message (or `inputs/`).
 3. `./ccb see cards/<name>`; open `out/see/photos.jpg` if your model can read
    images, otherwise read `out/see/visual.md` and say so. Note the face
    positions and which photographs are strong.
-4. Write `design.json` with **two or three fronts and one back**. Each is a
-   composition: slots, zones, ornaments, lines. Name each one and add notes.
-   Follow a direction for coherence, then take one deliberate liberty.
+4. Write `design.json` with **two or three fronts and one back**. Each is a page
+   composed from scratch: a background, shapes, slots, zones, lines. Name each
+   one and add notes. The three fronts must be three different ideas, not the
+   same page with new words — change the background, the arrangement and where
+   the words sit. Nothing is drawn for you: if you want a border, a decoration or
+   paper grain, put it in `chrome`.
 5. `./ccb layout cards/<name> --file design.json`. Every error names a rule:
-   fix the composition and retry until it saves. Read the warnings.
+   fix the composition and retry until it saves. Read the warnings, especially
+   `composition.repeat` and `composition.plain`.
 6. `./ccb check cards/<name>` until 0 errors. Address every warning or explain
    it (a text-only back with 0% photo coverage is fine; a face keeping 40% is
    not).

@@ -42,9 +42,19 @@ are no slide kinds: you write every slide. A deck reads well as cover, one
 photograph per slide, a statement, a gallery, a closing — but that is advice,
 not a template.
 
+Design each page from scratch. The engine draws only what the composition
+declares: no frame, no decoration, no paper texture unless you ask for it in
+`chrome`. Reach for the primitives — a full-bleed photograph behind a scrim, a
+colour field, an arch- or circle-clipped portrait, a collage of tilted prints on
+different layers, rotated type, a panel. Two fronts must not share a skeleton:
+the gate warns with `composition.repeat` and `composition.plain` when they do.
+
 ## Hard rules
 
-- Text never sits on a photograph. Slots and zones never overlap.
+- Text sits on paper unless the zone says `"over_photo": true`; then the engine
+  colours it for the photograph underneath. Two zones never overlap.
+- Nothing is applied on your behalf: if a page needs a border or decoration, the
+  composition has to say so.
 - A photograph is never stretched. The engine cover-crops; faces move the crop.
 - Do not claim a `.pptx`. The output is a PDF (plus PNGs).
 - Do not claim to have seen an image unless your model can read images and you

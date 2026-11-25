@@ -41,8 +41,12 @@ def build_sheet(spec: CardSpec, designs=None, out: Path | None = None,
         is_selected = selected is not None and design.label == str(selected.get("name") or design.label)
         draw.text((x, y + tile.height + 5), design.label[:46], font=font,
                   fill=(30, 40, 36) if is_selected else (70, 76, 72))
-        meta = f"{len(design.slots)} photos, {design.coverage * 100:.0f}% coverage"
-        draw.text((x, y + tile.height + 5), meta, font=small, fill=(120, 120, 112), anchor="ra")
+        if design.background.get("photo") is not None and not design.slots:
+            meta = "full-bleed photograph"
+        else:
+            meta = f"{len(design.slots)} photos, {design.coverage * 100:.0f}% coverage"
+        draw.text((x + tile.width, y + tile.height + 5), meta, font=small,
+                  fill=(120, 120, 112), anchor="ra")
         if is_selected:
             draw.rectangle((x - 2, y - 2, x + tile.width + 2, y + tile.height + 2),
                            outline=(176, 141, 79), width=3)

@@ -18,15 +18,28 @@
       "max": 12,
       "min_side": 0.06,
       "min_area": 0.004,
-      "treatments": ["plain", "border", "shadow", "tilt", "rounded"]
+      "treatments": ["plain", "border", "shadow", "tilt", "rounded"],
+      "clips": ["rect", "rounded", "arch", "circle", "oval"],
+      "max_rotate": 12
     },
     "zones": {
       "max": 10,
       "min_area": 0.006,
       "min_width": 0.16,
       "alignments": ["left", "center", "right"],
-      "valigns": ["top", "center", "bottom"]
+      "valigns": ["top", "center", "bottom"],
+      "max_rotate": 90
     },
+    "shapes": {
+      "max": 16,
+      "kinds": ["rect", "band", "circle", "ellipse", "arch", "panel", "rounded", "line"]
+    },
+    "layers": { "min": -5, "max": 5 },
+    "chrome": {
+      "borders": ["none", "rule", "double", "frame", "postcard"]
+    },
+    "backgrounds": { "scrim_max": 0.95 },
+    "diversity": { "warn_plain": true, "step": 0.05 },
     "photos": {"min_coverage": 0.20, "max_coverage": 0.84},
     "ornaments": {"max": 4, "kinds": ["holly", "snow", "stars", "confetti", "none"]},
     "lines": {"max": 8, "tokens": ["ink", "soft", "accent", "panel", "bg"], "max_weight": 3},

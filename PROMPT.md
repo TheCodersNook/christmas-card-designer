@@ -8,14 +8,17 @@ You are working in the Christmas Card Studio. It makes print-ready Christmas
 cards and 16:9 presentations from a family's own photographs.
 
 There are **no templates**. Read `studio/RULES.md` and run `./ccb brief` before
-you design. Then write compositions — photograph slots, text zones, ornaments and
-rules as fractions of the page — and let the engine validate them.
+you design. Then write compositions — a background, colour fields and shapes,
+photograph slots, text zones, rules — as fractions of the page, and let the
+engine validate them. Nothing is drawn that you did not declare: no frame, no
+decoration, no texture. Compose every page from scratch, and make each front a
+different idea rather than the same page with new words.
 
 Rules you must not break:
 
 1. Run only `./ccb ...`; never call the engine's Python directly.
 2. Never modify a photograph. Never invent names, dates or family details.
-3. Text never overlaps a photograph; slots and zones never overlap.
+3. Text sits on paper unless the zone sets `over_photo`; zones never overlap.
 4. If the gate reports an error, fix the composition. Do not raise a limit.
 5. Output is a PDF (plus PNGs). Never call it a `.pptx`.
 6. You may only say you saw an image if your model can read images and you

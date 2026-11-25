@@ -1,8 +1,9 @@
-"""Procedural decoration: snow, stars, holly, confetti and borders.
+"""Procedural decoration: snow, stars, holly, confetti and optional borders.
 
 Everything is drawn with a seeded random generator, so the same card always
 produces the same snowflakes. Decorations keep out of photograph and text
-rectangles instead of sitting on top of someone's face.
+rectangles instead of sitting on top of someone's face. Nothing here is applied
+unless a composition asks for it (`ornaments` or `chrome`).
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import math
 import random
 from typing import Iterable
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from . import config
 
@@ -27,7 +28,8 @@ def _free(r: Rect, keepout: Iterable[Rect], pad: float) -> bool:
 
 
 def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, style: config.Style,
-             width: int, height: int, keepout: list[Rect], seed: int) -> None:
+             width: int, height: int, keepout: list[Rect], seed: int,
+             ox: float = 0.0, oy: float = 0.0) -> None:
     rng = random.Random(seed)
     short = min(width, height)
     density = max(0.0, min(1.5, style.density))
@@ -40,7 +42,7 @@ def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, styl
             if not _free(box, keepout, r * 2):
                 continue
             color = palette.accent if rng.random() < 0.18 else palette.ink
-            draw.ellipse(box, fill=color)
+            draw.ellipse((ox + box[0], oy + box[1], ox + box[2], oy + box[3]), fill=color)
     elif kind == "stars":
         count = int(11 * density) + 3
         for _ in range(count):
@@ -50,8 +52,8 @@ def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, styl
             if not _free(box, keepout, s):
                 continue
             w = max(1, int(short * 0.0011))
-            draw.line((x - s, y, x + s, y), fill=palette.accent, width=w)
-            draw.line((x, y - s, x, y + s), fill=palette.accent, width=w)
+            draw.line((ox + x - s, oy + y, ox + x + s, oy + y), fill=palette.accent, width=w)
+            draw.line((ox + x, oy + y - s, ox + x, oy + y + s), fill=palette.accent, width=w)
     elif kind == "confetti":
         count = int(34 * density) + 6
         for _ in range(count):
@@ -61,10 +63,11 @@ def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, styl
             if not _free(box, keepout, s):
                 continue
             color = rng.choice([palette.accent, palette.soft, palette.ink])
+            target = (ox + box[0], oy + box[1], ox + box[2], oy + box[3])
             if rng.random() < 0.5:
-                draw.ellipse(box, fill=color)
+                draw.ellipse(target, fill=color)
             else:
-                draw.rectangle(box, fill=color)
+                draw.rectangle(target, fill=color)
     elif kind == "holly":
         corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
         rng.shuffle(corners)
@@ -78,10 +81,10 @@ def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, styl
             if not _free((x - leaf * 2, y - leaf * 2, x + leaf * 2, y + leaf * 2), keepout, leaf):
                 continue
             for angle in (-35, 5, 45):
-                _leaf(draw, x, y, leaf, angle, palette.ink)
+                _leaf(draw, ox + x, oy + y, leaf, angle, palette.ink)
             for j, off in enumerate((-0.7, 0.2, 1.0)):
-                bx = x + off * leaf * 0.9
-                by = y + leaf * 0.65 + (0.25 * leaf if j == 1 else 0)
+                bx = ox + x + off * leaf * 0.9
+                by = oy + y + leaf * 0.65 + (0.25 * leaf if j == 1 else 0)
                 draw.ellipse((bx - leaf * 0.22, by - leaf * 0.22, bx + leaf * 0.22, by + leaf * 0.22),
                              fill=palette.accent)
 
@@ -97,36 +100,45 @@ def _leaf(draw: ImageDraw.ImageDraw, x: float, y: float, size: float, angle_deg:
     draw.polygon([left, mid_l, tip, mid_r, right], fill=color)
 
 
-def decorate(draw: ImageDraw.ImageDraw, style: config.Style, palette: config.Palette,
-             width: int, height: int, keepout: list[Rect], seed: int) -> None:
+def decorate(img: Image.Image, style: config.Style, palette: config.Palette,
+             width: int, height: int, keepout: list[Rect], seed: int,
+             offset: tuple[int, int] = (0, 0)) -> None:
     if style.decoration and style.decoration != "none" and style.density > 0:
-        _scatter(draw, style.decoration, palette, style, width, height, keepout, seed)
+        ox, oy = offset
+        _scatter(ImageDraw.Draw(img), style.decoration, palette, style, width, height,
+                 keepout, seed, ox, oy)
 
 
-def border(draw: ImageDraw.ImageDraw, style: config.Style, palette: config.Palette,
-           width: int, height: int, margin_px: float) -> None:
-    """The printed border, drawn just inside the trim so bleed cannot clip it."""
+def border(img: Image.Image, style: config.Style, palette: config.Palette,
+           width: int, height: int, margin_px: float,
+           offset: tuple[int, int] = (0, 0)) -> None:
+    """An optional printed border, drawn just inside the trim so bleed cannot clip it."""
     short = min(width, height)
     kind = style.border
-    if kind == "none":
+    if kind in ("", "none"):
         return
+    ox, oy = offset
+    draw = ImageDraw.Draw(img)
     inset = max(2.0, margin_px * 0.42)
     lw = max(1, int(round(short * 0.0016)))
+    x0, y0, x1, y1 = ox + inset, oy + inset, ox + width - inset, oy + height - inset
     if kind == "rule":
-        draw.line((inset, inset * 0.62, width - inset, inset * 0.62), fill=palette.accent, width=lw)
+        draw.line((x0, oy + inset * 0.62, x1, oy + inset * 0.62), fill=palette.accent, width=lw)
     elif kind == "double":
-        draw.rectangle((inset, inset, width - inset, height - inset), outline=palette.ink, width=lw)
+        draw.rectangle((x0, y0, x1, y1), outline=palette.ink, width=lw)
         gap = inset * 0.28
-        draw.rectangle((inset + gap, inset + gap, width - inset - gap, height - inset - gap),
+        draw.rectangle((x0 + gap, y0 + gap, x1 - gap, y1 - gap),
                        outline=palette.accent, width=max(1, lw // 2))
     elif kind == "frame":
-        draw.rectangle((inset, inset, width - inset, height - inset), outline=palette.accent, width=lw * 3)
-        draw.rectangle((inset * 1.5, inset * 1.5, width - inset * 1.5, height - inset * 1.5),
+        draw.rectangle((x0, y0, x1, y1), outline=palette.accent, width=lw * 3)
+        inner = inset * 0.5
+        draw.rectangle((x0 + inner, y0 + inner, x1 - inner, y1 - inner),
                        outline=palette.accent, width=max(1, lw // 2))
     elif kind == "postcard":
-        draw.rectangle((inset, inset, width - inset, height - inset), outline=palette.accent, width=lw)
-        inner = inset * 1.45
-        draw.rectangle((inner, inner, width - inner, height - inner), outline=palette.soft, width=max(1, lw // 2))
+        draw.rectangle((x0, y0, x1, y1), outline=palette.accent, width=lw)
+        inner = inset * 0.45
+        draw.rectangle((x0 + inner, y0 + inner, x1 - inner, y1 - inner),
+                       outline=palette.soft, width=max(1, lw // 2))
 
 
 def rule(draw: ImageDraw.ImageDraw, x0: float, x1: float, y: float, color: str, width: int) -> None:

@@ -23,10 +23,17 @@ piece of advice, or let the agent take a creative liberty the rulebook allows.
   scales, palettes and eight *directions* (classic, editorial, nordic, ...).
   `studio/RULES.md` explains every field and says what may be invented. Nothing
   about the look is compiled into the code.
-- **Compositions, not layouts.** A card or slide is a list of photograph slots,
-  text zones, ornaments and rules, written as fractions of the page. The agent
-  writes it; it can be asymmetric, full-bleed, typographic, quiet — whatever
-  serves the photographs.
+- **Compositions, not layouts.** A card or slide is a page written from scratch:
+  a background (flat, gradient, or a full-bleed photograph under a scrim),
+  colour fields and shapes, photograph slots that can be clipped into an arch or
+  a circle, tilted, layered into a collage, text zones that can sit on a
+  photograph or run down an edge, rules, and optional chrome. Every element has
+  a layer. Nothing is added that the composition did not ask for — there is no
+  house frame, no house decoration, no house paper.
+- **Each page is its own.** The agent writes two or three genuinely different
+  fronts; the gate warns when two of them share a skeleton
+  (`composition.repeat`) or when a page is only a photograph and a stack of text
+  (`composition.plain`).
 - **A gate, not blind faith.** Before saving, every rectangle is checked for
   bounds, overlaps, margins, coverage, type sizes, contrast and print resolution.
   Errors stop the save with the rule named; warnings carry the exact numbers.
@@ -112,7 +119,7 @@ designed rather than generated from a preset.
 
 | you want | edit |
 | --- | --- |
-| a different house look | a direction in `studio/rules.json` (`palette`, `heading`, `guidance`, ...) |
+| a different type system or palette | a direction in `studio/rules.json` (`palette`, `heading`, `guidance`, ...) |
 | different type sizes | `type.roles` in `rules.json` |
 | stricter or looser checks | `composition.*` in `rules.json` |
 | a new colour scheme | `palettes` in `rules.json` |

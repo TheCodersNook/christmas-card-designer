@@ -75,6 +75,50 @@ a deck has a list of slides. The shape is the same everywhere:
 - `side` is `front` or `back` for a card; omitted for a slide.
 - `notes` is free text and is stored with the composition. Use it.
 
+**The engine adds nothing you did not ask for.** There is no house frame, no
+house decoration, no paper grain unless the composition turns it on. A page is
+only what its background, shapes, photographs, rules and words make it. That is
+why two cards from this studio need not look related, and why two fronts for the
+same card must not share a skeleton.
+
+### 2.0 Background and shapes
+
+```json
+"background": {"photo": 0, "scrim": 0.9, "scrim_from": "bottom",
+               "scrim_reach": 0.62, "scrim_color": "panel"}
+"background": {"fill": "accent"}
+"background": {"gradient": ["bg", "panel"], "angle": 90}
+
+"shapes": [
+  {"kind": "band",   "x": 0, "y": 0.80, "w": 1, "h": 0.20, "fill": "panel"},
+  {"kind": "circle", "x": 0.48, "y": -0.22, "w": 0.78, "h": 0.78,
+   "fill": "accent", "opacity": 0.95},
+  {"kind": "arch",   "x": 0.06, "y": 0.10, "w": 0.36, "h": 0.78, "fill": "panel"}
+]
+```
+
+A background is the whole page, bleed included. `photo` makes it a full-bleed
+photograph; `scrim` (0..1) fades a colour over it from one edge so type can sit
+on the picture; `scrim_reach` says how far in the fade reaches full strength
+(default 0.65 of the page); `scrim_from` is `bottom`, `top`, `left`, `right` or
+`full`. `fill` is a flat colour; `gradient` is two colours and an angle.
+
+Shapes are flat colour fields under (or over) everything: `rect`, `band`,
+`circle`, `ellipse`, `arch`, `panel` (rounded), `rounded`, `line`. They may run
+off the page — a disc cut by the trim is a real design move — and take
+`opacity`, `rotate` and a `layer`. `arch` is the rounded-top plate; `band` is
+full width regardless of `x`.
+
+### 2.0.1 Layers
+
+Every slot, zone, shape and rule has a `layer` (default 0, from -5 to 5). Paint
+order is: background, then everything sorted by layer. Within one layer, shapes
+go first, then photographs, then rules, then words. Two photographs may overlap,
+but only if they sit on different layers — that is a deliberate collage rather
+than an accident. Type may sit on a photograph only when the zone says
+`"over_photo": true`; the engine samples what is actually underneath and picks
+the text colour for contrast.
+
 ### 2.1 Slots (photographs)
 
 | field | meaning |
@@ -83,6 +127,10 @@ a deck has a list of slides. The shape is the same everywhere:
 | `x, y, w, h` | the rectangle, as fractions |
 | `treatment` | optional override: `plain`, `border`, `shadow`, `tilt`, `rounded` |
 | `focus` | optional `[x, y]` crop focus in the photograph, 0..1 |
+| `clip` | optional: `rect`, `rounded`, `arch`, `circle`, `oval` |
+| `rotate` | optional, ±12°; turns the print on the page |
+| `layer` | paint order, -5..5; two overlapping slots need different layers |
+| `bleed` | `true` runs a slot that touches the trim edge into the bleed |
 
 A slot is a window, never a stretch. The engine cover-crops the photograph to the
 slot's aspect: it removes the excess from the sides or the top and bottom, then
@@ -116,9 +164,18 @@ whole stack shrinks together rather than one line dropping out.
 | `panel` | true draws a solid panel in the palette's `panel` colour behind the words |
 | `text` | literal text for this zone (captions, page numbers); overrides the stored words |
 
-Text never sits on a photograph. The gate rejects a zone that overlaps a slot,
-and rejects two zones that overlap each other. That is a hard rule, not a taste
-call: a face behind a line of type is a ruined card.
+Text sits on paper by default, and the gate rejects a zone that overlaps a slot
+unless the zone declares `"over_photo": true`. Then the overlap is deliberate:
+the engine samples the average colour under the zone and colours the type for
+contrast, and the gate reports that contrast. Two zones never overlap each
+other. A zone may also set `color` (a palette token or `#hex`) when you want a
+particular ink rather than the readable one, and `rotate` (up to ±90°) for a
+spine of type down an edge. `panel` draws a colour behind the words:
+`true`/`"panel"` or any palette token, with `panel_opacity` and `panel_pad`.
+
+`over_photo` on a face is a judgement call the rulebook leaves to you: light
+type over a dark coat is fine, over a forehead it is not. `./ccb see` shows the
+face boxes so you can check.
 
 Limits: at most `composition.zones.max` (10) zones; a zone at least
 `zones.min_width` (0.16) wide; text inside the direction's margin is a warning,
@@ -137,6 +194,18 @@ Kinds: `holly`, `snow`, `stars`, `confetti`, `none`. `density` runs roughly
 **replace** the direction's decoration; if you list none, the direction's
 decoration is used. Ornaments are always kept out of text zones and photographs,
 so they cannot cover a face or a word.
+
+### 2.3.1 Chrome (optional, and off by default)
+
+```json
+"chrome": {"border": "double", "decoration": "holly", "density": 0.4,
+           "texture": true}
+```
+
+`border` is `none`, `rule`, `double`, `frame` or `postcard`; `decoration` is any
+ornament kind; `texture` turns on the quiet paper grain. Nothing here is applied
+unless you write it: a card with no `chrome` and no `ornaments` is flat colour
+and photographs, which is usually the stronger choice.
 
 ### 2.4 Rules (lines)
 
@@ -276,8 +345,16 @@ gate; warnings are notes.
 | `photo.focus` | error | focus is not `[x, y]` inside 0..1 |
 | `photo.small` | warn | a slot's short side is below `min_side` |
 | `photos.coverage` | warn/error | below the minimum (warn) or above the maximum (error) |
-| `overlap.text_photo` | error | text sits on a photograph |
-| `overlap.same` | error | two slots or two zones overlap |
+| `overlap.text_photo` | error | text sits on a photograph without `over_photo` |
+| `overlap.same` | error | two zones overlap, or two slots overlap on the same layer |
+| `background.*` | error | unknown background photo, colour, scrim value or direction |
+| `shapes.*` | error | unknown shape, bad colour, opacity, rotation or layer |
+| `photo.clip` / `photo.rotate` / `photo.layer` | error | clip or angle outside the vocabulary |
+| `type.rotate` / `type.layer` / `type.color` / `type.panel` | error | outside the vocabulary |
+| `chrome.border` / `chrome.decoration` | error | not in `composition.chrome.borders` or an ornament kind |
+| `composition.repeat` | warn | two fronts share the same skeleton |
+| `composition.plain` | warn | a front is only a photograph and a stack of text |
+| `type.over_photo` | warn | `over_photo` is set but there is no picture underneath |
 | `type.roles` / `type.role` | error | no roles, or a role not in the rulebook |
 | `type.align` / `type.valign` / `type.font` | error | not in the allowed vocabulary |
 | `type.scale` | error | outside 0.35..2.2 |
@@ -300,18 +377,27 @@ copy and photographs used above 1.8x their pixels at the export DPI.
 The agent is expected to invent. The rules do not prescribe a layout; they
 describe what a layout must not break.
 
-**Free to invent:** the number of slots and their geometry; asymmetric and
-full-bleed compositions; overlaps of nothing (slots and zones never overlap);
-any number of fronts and one back; panels; rules; ornament kinds and density;
-type scale within 0.35..2.2; alignment and valign; fonts from the three families;
-captions and page numbers; words, as long as they are the user's words or plainly
-invented greetings the user asked for.
+**Free to invent:** the background (flat, gradient, full-bleed photograph,
+scrim); colour fields and shapes, including ones cut by the trim; the number of
+slots and their geometry; clipping and tilting prints; collages of overlapping
+photographs on different layers; type on a photograph, rotated type, panels,
+colour of the ink; asymmetric and full-bleed compositions; the number of fronts
+and one back; rules; ornaments and chrome, or none at all; type scale within
+0.35..2.2; alignment and valign; fonts from the three families; captions and page
+numbers; words, as long as they are the user's words or plainly invented
+greetings the user asked for.
 
-**Not free to break:** text on a photograph; a face cut in half without saying so;
-type below the floor without saying so; a photograph stretched; a role that does
-not exist; a composition that runs off the page; claiming a `.pptx` when the
-output is a PDF; claiming to have seen an image when the model cannot read
-images.
+**Not free to break:** text on a photograph without `over_photo`; a face cut in
+half without saying so; type below the floor without saying so; a photograph
+stretched; a role that does not exist; a composition that runs off the page;
+claiming a `.pptx` when the output is a PDF; claiming to have seen an image when
+the model cannot read images.
+
+**Do not reach for the same page twice.** Two fronts for one card should differ
+in skeleton, not only in words: a different background, a different arrangement
+of the photographs, a different place for the words. The gate warns when two
+fronts share a geometry (`composition.repeat`) and when a front is nothing but a
+photograph and a stack of text (`composition.plain`).
 
 **How to use the latitude well:**
 
@@ -374,6 +460,16 @@ facts in words. A model that cannot read images must say so and work from
 
 ## 10. Version
 
-This rulebook describes rulebook version 2. The card format also reads version 1
-cards (a `style` and a list of generated `designs`) by migrating them to
-directions and compositions, so old work is not lost.
+This rulebook describes rulebook version 3.
+
+- **3** adds backgrounds (photograph with a scrim, fill, gradient), shapes and
+  colour fields, layers on every element, photographic clipping and rotation,
+  type on photographs with automatic contrast, rotated type, panels with
+  opacity and padding, opt-in chrome, and the diversity warnings. The renderer
+  no longer applies a direction's border, decoration or texture on its own.
+- **2** replaced the layout engines and fixed designs with rulebook checks and
+  free compositions.
+
+The card format still reads version 1 cards (a `style` and a list of generated
+`designs`) by migrating them to directions and compositions, so old work is not
+lost.

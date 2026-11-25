@@ -77,15 +77,22 @@ composition (`side` is ignored). Text roles for a deck add `title` and
 
 ```json
 {
-  "name": "Quiet hero",
+  "name": "Full-bleed cover",
   "side": "front",
-  "slots": [{"photo": 0, "x": 0.05, "y": 0.05, "w": 0.90, "h": 0.48,
-             "treatment": "plain", "focus": [0.5, 0.4]}],
-  "zones": [{"roles": ["greeting"], "x": 0.07, "y": 0.575, "w": 0.86,
-             "h": 0.085, "align": "left", "font": "heading"}],
-  "ornaments": [{"kind": "holly", "density": 0.5}],
-  "lines": [{"x1": 0.07, "y1": 0.55, "x2": 0.93, "y2": 0.55,
-             "token": "accent", "weight": 1}]
+  "background": {"photo": 0, "scrim": 0.9, "scrim_from": "bottom",
+                 "scrim_reach": 0.62, "scrim_color": "panel"},
+  "shapes": [{"kind": "band", "x": 0, "y": 0.86, "w": 1, "h": 0.14,
+              "fill": "accent", "layer": 1}],
+  "slots": [{"photo": 1, "x": 0.58, "y": 0.10, "w": 0.36, "h": 0.42,
+             "clip": "arch", "rotate": 2, "treatment": "shadow", "layer": 2}],
+  "zones": [{"roles": ["greeting"], "x": 0.06, "y": 0.60, "w": 0.86,
+             "h": 0.10, "align": "left", "over_photo": true},
+            {"roles": ["year"], "x": 0.70, "y": 0.88, "w": 0.24, "h": 0.04,
+             "align": "right"}],
+  "ornaments": [],
+  "lines": [{"x1": 0.06, "y1": 0.57, "x2": 0.94, "y2": 0.57,
+             "token": "accent", "weight": 1}],
+  "chrome": {"border": "none"}
 }
 ```
 
@@ -120,11 +127,14 @@ All fields and limits are in `studio/RULES.md`; the numbers are in
 then renders the selected front at 110 DPI to measure real type. Publish only
 after `check` shows 0 errors and `qa` says PASS.
 
-Errors: off-page rectangles, text on a photograph, overlapping slots or zones,
-unknown roles/treatments/fonts/alignments, coverage above the maximum, unknown
-ornament kinds or tokens, rules too heavy. Warnings: coverage below the minimum,
-small slots or zones, text outside the margin, faces cut or printed too small,
-type below the floor, low contrast, shortened copy, soft photographs.
+Errors: off-page rectangles, text on a photograph without `over_photo`,
+overlapping zones, overlapping slots on the same layer, unknown
+backgrounds/shapes/roles/treatments/clips/fonts/alignments, coverage above the
+maximum, unknown ornament kinds or tokens, rules too heavy. Warnings: coverage
+below the minimum, small slots or zones, text outside the safe area, faces cut or
+printed too small, type below the floor, low contrast, shortened copy, soft
+photographs, repeated skeletons (`composition.repeat`) and pages that are only a
+photograph and a stack of text (`composition.plain`).
 
 ## Seeing
 

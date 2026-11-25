@@ -1,9 +1,9 @@
 """Compositions: the brief, the rule checks and the installer.
 
-There is no template here. The agent writes a composition (slots, zones,
-ornaments, lines) and this module answers three questions: what does the
-rulebook allow, what is wrong with this composition, and what should the agent
-know before writing one.
+There is no template here. The agent writes a page (a background, colour fields,
+photograph slots, text zones, rules) and this module answers three questions:
+what does the rulebook allow, what is wrong with this composition, and what
+should the agent know before writing one.
 """
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from typing import Any
 from . import config, faces as faces_mod, layouts, photos as photo_mod
 from .layouts import Design, Slot, Zone, overlaps
 from .spec import CardSpec, SpecError
+
+PALETTE_TOKENS = ("bg", "ink", "soft", "accent", "panel", "on_panel")
 
 
 @dataclass
@@ -36,7 +38,16 @@ def design(comp: dict[str, Any]) -> Design:
     return d
 
 
-# --------------------------------------------------------------------- limits
+# --------------------------------------------------------------------- helpers
+def _colour_ok(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text.startswith("#"):
+        return len(text) in (4, 7)
+    return text in PALETTE_TOKENS
+
+
 def _rect(where: str, item: dict[str, Any], issues: list[Issue]) -> tuple[float, float, float, float] | None:
     try:
         x, y, w, h = float(item["x"]), float(item["y"]), float(item["w"]), float(item["h"])
@@ -54,6 +65,35 @@ def _rect(where: str, item: dict[str, Any], issues: list[Issue]) -> tuple[float,
     return x, y, w, h
 
 
+def _shape_rect(where: str, item: dict[str, Any], issues: list[Issue]) -> None:
+    """Shapes may bleed off the page (a disc cut by the trim) but not wander."""
+    try:
+        x, y, w, h = float(item["x"]), float(item["y"]), float(item["w"]), float(item["h"])
+    except (KeyError, TypeError, ValueError):
+        issues.append(Issue("error", "rect.missing", "needs x, y, w and h as fractions of the page", where))
+        return
+    if w < 0 or h < 0:
+        issues.append(Issue("error", "rect.size", "width and height cannot be negative", where))
+    if not (-0.6 <= x <= 1.6) or not (-0.6 <= y <= 1.6):
+        issues.append(Issue("error", "rect.bounds", f"a shape at {x:.2f}, {y:.2f} is nowhere near the page", where))
+    if x + w > 1.6 or y + h > 1.6:
+        issues.append(Issue("error", "rect.bounds", "the shape is nowhere near the page", where))
+
+
+def _number(item: dict[str, Any], key: str, default: float) -> float:
+    try:
+        return float(item.get(key, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _layer_ok(layer: int) -> bool:
+    lo = int(config.COMPOSE.get("layers", {}).get("min", -5))
+    hi = int(config.COMPOSE.get("layers", {}).get("max", 5))
+    return lo <= layer <= hi
+
+
+# ---------------------------------------------------------------------- limits
 def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
                          canvas: tuple[float, float] | None = None,
                          photo_stats: list[photo_mod.Photo] | None = None) -> list[Issue]:
@@ -74,19 +114,98 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
 
     slot_rules = config.COMPOSE.get("slots", {})
     zone_rules = config.COMPOSE.get("zones", {})
+    shape_rules = config.COMPOSE.get("shapes", {})
     treatments = [str(v) for v in slot_rules.get("treatments", [])]
     alignments = [str(v) for v in zone_rules.get("alignments", [])]
     valigns = [str(v) for v in zone_rules.get("valigns", [])]
+    clips = [str(v) for v in slot_rules.get("clips", ["rect", "rounded", "arch", "circle", "oval"])]
+    shape_kinds = [str(v) for v in shape_rules.get("kinds", [])]
 
     if len(slots) > int(slot_rules.get("max", 12)):
         issues.append(Issue("error", "slots.count", f"{len(slots)} photographs; the maximum is {slot_rules.get('max')}", name))
     if len(zones) > int(zone_rules.get("max", 10)):
         issues.append(Issue("error", "zones.count", f"{len(zones)} text zones; the maximum is {zone_rules.get('max')}", name))
 
+    # ------------------------------------------------------------ background
+    background = comp.get("background") or {}
+    if background:
+        if not isinstance(background, dict):
+            issues.append(Issue("error", "background.shape", "background must be an object", name))
+        else:
+            photo = background.get("photo")
+            fill = background.get("fill")
+            gradient = background.get("gradient")
+            if photo is None and not fill and not gradient:
+                issues.append(Issue("warn", "background.empty",
+                                    "a background needs 'photo', 'fill' or 'gradient'", name))
+            if photo is not None:
+                try:
+                    index = int(photo)
+                except (TypeError, ValueError):
+                    index = -1
+                if not (0 <= index < count):
+                    issues.append(Issue("error", "background.photo",
+                                        f"background photo {photo} does not exist (there are {count})", name))
+                scrim = _number(background, "scrim", 0.0)
+                if not (0.0 <= scrim <= 1.0):
+                    issues.append(Issue("error", "background.scrim", "scrim must be 0..1", name))
+                reach = _number(background, "scrim_reach", 0.65)
+                if not (0.05 <= reach <= 1.0):
+                    issues.append(Issue("error", "background.scrim", "scrim_reach must be 0.05..1", name))
+                where = str(background.get("scrim_from") or "bottom").lower()
+                if where not in ("bottom", "top", "left", "right", "full"):
+                    issues.append(Issue("error", "background.scrim",
+                                        "scrim_from must be bottom, top, left, right or full", name))
+                if background.get("scrim_color") and not _colour_ok(background.get("scrim_color")):
+                    issues.append(Issue("error", "background.colour",
+                                        "scrim_color must be a palette token or #hex", name))
+            if fill and not _colour_ok(fill):
+                issues.append(Issue("error", "background.colour",
+                                    "fill must be a palette token or #hex", name))
+            if gradient:
+                if not isinstance(gradient, (list, tuple)) or len(gradient) != 2:
+                    issues.append(Issue("error", "background.gradient",
+                                        "gradient must be [colour, colour]", name))
+                elif not all(_colour_ok(v) for v in gradient):
+                    issues.append(Issue("error", "background.gradient",
+                                        "gradient colours must be palette tokens or #hex", name))
+
+    # ---------------------------------------------------------------- shapes
+    shapes = comp.get("shapes") or []
+    if not isinstance(shapes, list):
+        issues.append(Issue("error", "shapes.shape", "shapes must be a list", name))
+        shapes = []
+    if len(shapes) > int(shape_rules.get("max", 16)):
+        issues.append(Issue("error", "shapes.count",
+                            f"{len(shapes)} shapes; the maximum is {shape_rules.get('max')}", name))
+    for i, shape in enumerate(shapes):
+        where = f"{name} shape {i + 1}"
+        if not isinstance(shape, dict):
+            issues.append(Issue("error", "shapes.shape", "a shape is an object", where))
+            continue
+        kind = str(shape.get("kind", "rect")).lower()
+        if shape_kinds and kind not in shape_kinds:
+            issues.append(Issue("error", "shapes.kind", f"unknown shape '{kind}'; use {', '.join(shape_kinds)}", where))
+        _shape_rect(where, shape, issues)
+        if shape.get("fill") and not _colour_ok(shape.get("fill")):
+            issues.append(Issue("error", "shapes.fill", "fill must be a palette token or #hex", where))
+        opacity = _number(shape, "opacity", 1.0)
+        if not (0.0 <= opacity <= 1.0):
+            issues.append(Issue("error", "shapes.opacity", "opacity must be 0..1", where))
+        rotate = _number(shape, "rotate", 0.0)
+        if not (-180.0 <= rotate <= 180.0):
+            issues.append(Issue("error", "shapes.rotate", "rotate must be -180..180", where))
+        if not _layer_ok(int(_number(shape, "layer", 0))):
+            issues.append(Issue("error", "shapes.layer", "layer is outside the allowed range", where))
+
+    # ----------------------------------------------------------------- slots
     seen_photos: list[int] = []
-    rects: list[tuple[str, tuple[float, float, float, float]]] = []
+    rects: list[tuple[str, str, int, tuple[float, float, float, float]]] = []
     for i, slot in enumerate(slots):
         where = f"{name} slot {i + 1}"
+        if not isinstance(slot, dict):
+            issues.append(Issue("error", "slot.shape", "a slot is an object", where))
+            continue
         rect = _rect(where, slot, issues)
         try:
             index = int(slot.get("photo"))
@@ -100,6 +219,16 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
         treatment = str(slot.get("treatment", "")).lower()
         if treatment and treatment not in treatments:
             issues.append(Issue("error", "photo.treatment", f"unknown treatment '{treatment}'; use {', '.join(treatments)}", where))
+        clip = str(slot.get("clip", "") or "").lower()
+        if clip and clip not in clips:
+            issues.append(Issue("error", "photo.clip", f"unknown clip '{clip}'; use {', '.join(clips)}", where))
+        rotate = _number(slot, "rotate", 0.0)
+        max_rotate = float(slot_rules.get("max_rotate", 12))
+        if abs(rotate) > max_rotate:
+            issues.append(Issue("error", "photo.rotate", f"a photograph may turn {max_rotate:g} degrees at most", where))
+        layer = int(_number(slot, "layer", 0))
+        if not _layer_ok(layer):
+            issues.append(Issue("error", "photo.layer", "layer is outside the allowed range", where))
         focus = slot.get("focus")
         if focus is not None:
             if not isinstance(focus, (list, tuple)) or len(focus) != 2:
@@ -111,19 +240,24 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
         if rect:
             if min(rect[2], rect[3]) < float(slot_rules.get("min_side", 0.06)):
                 issues.append(Issue("warn", "photo.small", f"a slot {min(rect[2], rect[3]):.2f} of the page is very small", where))
-            rects.append((where, rect))
+            rects.append(("slot", where, layer, rect))
 
     total_photo = sum(s.w * s.h for s in design({"slots": slots}).slots)
     lo = float(config.COMPOSE.get("photos", {}).get("min_coverage", 0.2))
     hi = float(config.COMPOSE.get("photos", {}).get("max_coverage", 0.84))
     # A text-only back is legitimate; coverage only applies once something is placed.
-    if slots and total_photo < lo:
+    if slots and not background.get("photo") and total_photo < lo:
         issues.append(Issue("warn", "photos.coverage", f"photographs cover only {total_photo * 100:.0f}% (aim for {lo * 100:.0f}-{hi * 100:.0f}%)", name))
     if total_photo > hi:
         issues.append(Issue("error", "photos.coverage", f"photographs cover {total_photo * 100:.0f}% (maximum {hi * 100:.0f}%)", name))
 
+    # ----------------------------------------------------------------- zones
+    over_photo_zones: list[tuple[str, tuple[float, float, float, float]]] = []
     for i, zone in enumerate(zones):
         where = f"{name} zone {i + 1}"
+        if not isinstance(zone, dict):
+            issues.append(Issue("error", "zone.shape", "a zone is an object", where))
+            continue
         rect = _rect(where, zone, issues)
         roles = [str(r) for r in zone.get("roles", [])]
         if not roles:
@@ -146,32 +280,64 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
             scale = 1.0
         if not (0.35 <= scale <= 2.2):
             issues.append(Issue("error", "type.scale", "scale must be between 0.35 and 2.2", where))
+        color = zone.get("color")
+        if color and not _colour_ok(color):
+            issues.append(Issue("error", "type.color", "color must be a palette token or #hex", where))
+        panel = zone.get("panel")
+        if isinstance(panel, str) and panel and not _colour_ok(panel):
+            issues.append(Issue("error", "type.panel", "panel must be true or a palette token", where))
+        opacity = _number(zone, "panel_opacity", 1.0)
+        if not (0.0 <= opacity <= 1.0):
+            issues.append(Issue("error", "type.panel", "panel_opacity must be 0..1", where))
+        rotate = _number(zone, "rotate", 0.0)
+        max_rotate = float(zone_rules.get("max_rotate", 90))
+        if abs(rotate) > max_rotate:
+            issues.append(Issue("error", "type.rotate", f"type may turn {max_rotate:g} degrees at most", where))
+        layer = int(_number(zone, "layer", 0))
+        if not _layer_ok(layer):
+            issues.append(Issue("error", "type.layer", "layer is outside the allowed range", where))
         if rect:
             if rect[2] < float(zone_rules.get("min_width", 0.16)):
                 issues.append(Issue("warn", "type.narrow", "a text zone this narrow will break words", where))
             if rect[2] * rect[3] < float(zone_rules.get("min_area", 0.006)):
                 issues.append(Issue("warn", "type.small", "the text zone is very small for its copy", where))
-            m = style.margin
-            if spec is not None and (rect[0] < m - 0.02 or rect[1] < m - 0.02 or
-                                     rect[0] + rect[2] > 1 - m + 0.02 or rect[1] + rect[3] > 1 - m + 0.02):
-                issues.append(Issue("warn", "type.margin", f"text leaves the {m:.3f} margin; the direction prefers it inside", where))
-            rects.append((where, rect))
+            m = style.margin / 2
+            if spec is not None and not zone.get("over_photo") and not panel and (
+                    rect[0] < m or rect[1] < m or
+                    rect[0] + rect[2] > 1 - m or rect[1] + rect[3] > 1 - m):
+                issues.append(Issue("warn", "type.margin",
+                                    f"text runs inside the page's safe area ({m:.3f}); the direction prefers {style.margin:.3f}", where))
+            rects.append(("zone", where, layer, rect))
+            if zone.get("over_photo"):
+                over_photo_zones.append((where, rect))
 
+    # ------------------------------------------------------------- overlaps
     for i in range(len(rects)):
         for j in range(i + 1, len(rects)):
-            wa, ra = rects[i]
-            wb, rb = rects[j]
+            kind_a, wa, la, ra = rects[i]
+            kind_b, wb, lb, rb = rects[j]
             area = overlaps(ra, rb)
             if area <= 1e-6:
                 continue
-            text_zone = wa.startswith(name + " zone") or wb.startswith(name + " zone")
-            same_kind = wa.split()[-2] == wb.split()[-2]
-            if text_zone and not same_kind:
-                issues.append(Issue("error", "overlap.text_photo", f"{wa} overlaps {wb}", name))
-            elif same_kind:
+            if kind_a == kind_b == "zone":
                 issues.append(Issue("error", "overlap.same", f"{wa} overlaps {wb}", name))
+            elif kind_a == kind_b == "slot":
+                if la == lb:
+                    issues.append(Issue("error", "overlap.same",
+                                        f"{wa} overlaps {wb} on layer {la}; give one a different 'layer' to layer them", name))
             else:
-                issues.append(Issue("error", "overlap.rect", f"{wa} overlaps {wb}", name))
+                zone_where = wa if kind_a == "zone" else wb
+                if not any(zone_where == w and overlaps(r, ra if kind_a == "zone" else rb) > 1e-6
+                           for w, r in over_photo_zones):
+                    issues.append(Issue("error", "overlap.text_photo",
+                                        f"{wa} overlaps {wb}; set the zone's 'over_photo' if the text is meant to sit on the picture", name))
+
+    has_background_photo = background.get("photo") is not None if isinstance(background, dict) else False
+    for where, rect in over_photo_zones:
+        on_slot = any(overlaps(rect, r) > 0.02 for kind, _w, _l, r in rects if kind == "slot")
+        if not on_slot and not has_background_photo:
+            issues.append(Issue("warn", "type.over_photo",
+                                "over_photo is set but no photograph is underneath", where))
 
     known_roles = {str(r) for z in zones if isinstance(z, dict) for r in z.get("roles", [])}
     if spec is not None:
@@ -180,6 +346,7 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
                     isinstance(z, dict) and z.get("text") and role in z.get("roles", []) for z in zones):
                 issues.append(Issue("warn", "words.empty", f"role '{role}' is placed but has no words", name))
 
+    # ------------------------------------------------------ ornament & rules
     ornaments = comp.get("ornaments") or []
     kinds = [str(v) for v in config.COMPOSE.get("ornaments", {}).get("kinds", [])]
     if len(ornaments) > int(config.COMPOSE.get("ornaments", {}).get("max", 4)):
@@ -215,13 +382,25 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
         if weight > float(config.COMPOSE.get("lines", {}).get("max_weight", 3)):
             issues.append(Issue("error", "lines.weight", "a rule that heavy is a border; use weight 3 or less", where))
 
+    chrome = comp.get("chrome") or {}
+    if isinstance(chrome, dict):
+        border = str(chrome.get("border") or "none").lower()
+        borders = [str(v) for v in config.COMPOSE.get("chrome", {}).get("borders", [])]
+        if border not in borders:
+            issues.append(Issue("error", "chrome.border", f"unknown border '{border}'; use {', '.join(borders)}", name))
+        decoration = str(chrome.get("decoration") or "none").lower()
+        if decoration not in ["none", *kinds]:
+            issues.append(Issue("error", "chrome.decoration", f"unknown decoration '{decoration}'", name))
+
     # Face safety, only when we can actually see the photographs.
     if spec is not None and photo_stats is not None:
         for i, slot in enumerate(slots):
-            rect = _rect(f"{name} slot {i + 1}", slot, []) if isinstance(slot, dict) else None
+            if not isinstance(slot, dict):
+                continue
+            rect = _rect(f"{name} slot {i + 1}", slot, [])
             try:
                 index = int(slot.get("photo"))
-            except (TypeError, ValueError, KeyError):
+            except (TypeError, ValueError):
                 continue
             if rect is None or not (0 <= index < len(photo_stats)):
                 continue
@@ -257,6 +436,29 @@ def load_photo_stats(spec: CardSpec) -> list[photo_mod.Photo]:
     return out
 
 
+# ------------------------------------------------------------------ diversity
+def geometry_signature(comp: dict[str, Any], step: float = 0.05) -> tuple:
+    """A rough fingerprint of a page's skeleton, used to catch repeated layouts."""
+    def q(v: Any) -> int:
+        try:
+            return int(round(float(v) / step))
+        except (TypeError, ValueError):
+            return -1
+    marks = []
+    for s in comp.get("slots", []) or []:
+        if isinstance(s, dict):
+            marks.append(("s", q(s.get("x")), q(s.get("y")), q(s.get("w")), q(s.get("h"))))
+    for z in comp.get("zones", []) or []:
+        if isinstance(z, dict):
+            marks.append(("z", q(z.get("x")), q(z.get("y")), q(z.get("w")), q(z.get("h"))))
+    return tuple(sorted(marks))
+
+
+def _is_plain(comp: dict[str, Any]) -> bool:
+    return not (comp.get("background") or comp.get("shapes") or comp.get("ornaments")
+                or comp.get("lines") or (comp.get("chrome") or {}).get("border") not in (None, "", "none"))
+
+
 def validate_card(spec: CardSpec) -> list[Issue]:
     issues: list[Issue] = []
     stats = load_photo_stats(spec)
@@ -269,6 +471,10 @@ def validate_card(spec: CardSpec) -> list[Issue]:
         issues.extend(validate_composition(comp, spec, spec.card_inches, stats))
     used = {int(s.get("photo")) for c in spec.compositions for s in c.get("slots", [])
             if isinstance(s, dict) and str(s.get("photo", "")).lstrip("-").isdigit()}
+    for comp in spec.compositions:
+        bg = comp.get("background") or {}
+        if isinstance(bg, dict) and str(bg.get("photo", "")).lstrip("-").isdigit():
+            used.add(int(bg["photo"]))
     for i, photo in enumerate(stats):
         if i not in used:
             issues.append(Issue("warn", "photos.unused", f"photograph {i} ({photo.path.name}) is not placed", ""))
@@ -276,6 +482,21 @@ def validate_card(spec: CardSpec) -> list[Issue]:
         issues.append(Issue("error", "words.empty", "the card has no words at all"))
     if not str(spec.text.get("greeting", "")).strip():
         issues.append(Issue("warn", "words.greeting", "no greeting set"))
+
+    fronts = spec.front_compositions
+    seen: list[tuple[str, tuple]] = []
+    for comp in fronts:
+        label = str(comp.get("name") or "composition")
+        sig = geometry_signature(comp)
+        if any(sig == other for _label, other in seen):
+            match = next(other_label for other_label, other in seen if other == sig)
+            issues.append(Issue("warn", "composition.repeat",
+                                f"'{label}' has the same skeleton as '{match}'; a second front should argue a different idea", label))
+        seen.append((label, sig))
+        if len(fronts) > 1 and _is_plain(comp):
+            issues.append(Issue("warn", "composition.plain",
+                                f"'{label}' is only photographs and a stack of text; a colour field, a full-bleed "
+                                "photograph, a shape or a rule would make it this card rather than any card", label))
     return issues
 
 
@@ -346,14 +567,21 @@ def rule_digest() -> str:
     comp = config.COMPOSE
     sizes = ", ".join(f"{k} ({v[0]:g}x{v[1]:g} in)" for k, v in config.SIZES.items())
     roles = ", ".join(f"{k} {v.get('scale', 0):g}" for k, v in config.ROLE_RULES.items())
+    shapes = comp.get("shapes", {})
+    chrome = comp.get("chrome", {})
     return "\n".join([
         f"paper        {sizes}",
         f"bleed        {config.BLEED_IN} in, export dpi 96-{config.MAX_DPI}",
-        f"margins      {comp.get('margin', {}).get('recommended_min', 0.045)}-{comp.get('margin', {}).get('recommended_max', 0.12)} (each direction has its own)",
-        f"photographs  {comp.get('photos', {}).get('min_coverage', 0.2)}-{comp.get('photos', {}).get('max_coverage', 0.84)} of the page, max {comp.get('slots', {}).get('max', 12)} slots",
+        f"margins      {comp.get('margin', {}).get('recommended_min', 0.045)}-{comp.get('margin', {}).get('recommended_max', 0.12)} (each direction has its own; advice, not a cage)",
+        f"background   photo (with scrim 0-1), fill, or gradient [a, b]; the whole page, bleed included",
+        f"shapes       {', '.join(shapes.get('kinds', []))} (max {shapes.get('max', 16)}); fill from the palette or #hex, opacity 0-1, rotate ±180",
+        f"photographs  {comp.get('photos', {}).get('min_coverage', 0.2)}-{comp.get('photos', {}).get('max_coverage', 0.84)} of the page, max {comp.get('slots', {}).get('max', 12)} slots; clip {', '.join(comp.get('slots', {}).get('clips', []))}; rotate ±{comp.get('slots', {}).get('max_rotate', 12)}°; 'bleed' runs into the bleed",
         f"treatments   {', '.join(comp.get('slots', {}).get('treatments', []))}",
-        f"text zones   max {comp.get('zones', {}).get('max', 10)}; align {', '.join(comp.get('zones', {}).get('alignments', []))}; valign {', '.join(comp.get('zones', {}).get('valigns', []))}",
-        f"ornaments    {', '.join(comp.get('ornaments', {}).get('kinds', []))} (max {comp.get('ornaments', {}).get('max', 4)})",
+        f"text zones   max {comp.get('zones', {}).get('max', 10)}; align {', '.join(comp.get('zones', {}).get('alignments', []))}; valign {', '.join(comp.get('zones', {}).get('valigns', []))}; rotate ±{comp.get('zones', {}).get('max_rotate', 90)}°",
+        f"over photos  a zone with 'over_photo': true may sit on a picture; the engine colours it for contrast",
+        f"layers       {comp.get('layers', {}).get('min', -5)}..{comp.get('layers', {}).get('max', 5)} on slots, zones, shapes and rules; overlapping photographs need different layers",
+        f"ornaments    {', '.join(comp.get('ornaments', {}).get('kinds', []))} (max {comp.get('ornaments', {}).get('max', 4)}); nothing is drawn unless you ask",
+        f"chrome       border {', '.join(chrome.get('borders', []))}; texture true/false; also optional decoration + density",
         f"rules/lines  max {comp.get('lines', {}).get('max', 8)}; tokens {', '.join(comp.get('lines', {}).get('tokens', []))}",
         f"faces        keep {comp.get('faces', {}).get('min_crop_keep', 0.65):.0%} of every face; print at least {comp.get('faces', {}).get('min_width_in', 0.16)} in wide",
         f"type roles   {roles}   (fractions of the short side)",
@@ -372,6 +600,11 @@ def brief(spec: CardSpec) -> str:
         f"             {style.guidance}",
         f"Palette      {spec.palette.label}  bg {spec.palette.bg}  ink {spec.palette.ink}  accent {spec.palette.accent}  panel {spec.palette.panel}",
         f"Type         {style.heading} / {style.body} / {style.script}; align {style.align}; margin {style.margin:g}; caps {style.caps}",
+        "",
+        "The direction is a starting point, not a style sheet. The engine paints",
+        "only what you declare: no frame, no decoration, no texture unless asked.",
+        "Every page should be composed from scratch, and two fronts should not",
+        "share a skeleton.",
         "",
         "## The rulebook",
         rule_digest(),
@@ -406,23 +639,47 @@ def brief(spec: CardSpec) -> str:
         lines.append(f"  {key:<12} {st.label}: {st.guidance}")
     lines += [
         "",
+        "## The vocabulary (one page)",
+        "",
+        "  background  {photo, scrim, scrim_from, scrim_reach, scrim_color} | {fill} | {gradient: [a, b], angle}",
+        "  shapes      {kind, x, y, w, h, fill, opacity, rotate, layer, radius}",
+        "  slots       {photo, x, y, w, h, treatment, focus, clip, rotate, layer, bleed}",
+        "  zones       {roles, x, y, w, h, align, valign, font, scale, caps, text,",
+        "               panel, panel_opacity, panel_pad, color, rotate, layer, over_photo}",
+        "  lines       {x1, y1, x2, y2, token, weight, layer}",
+        "  ornaments   {kind, density}",
+        "  chrome      {border, decoration, density, texture}   (all off by default)",
+        "",
+        "A few moves that make a page specific rather than generic:",
+        "",
+        "  - a full-bleed photograph as the background, with a scrim and the type",
+        "    sitting on the picture (zone 'over_photo': true);",
+        "  - a colour field (shape 'band' or 'rect') that the photograph sits on or",
+        "    breaks out of;",
+        "  - an arch-, circle- or oval-clipped portrait against flat paper;",
+        "  - two or three snapshots overlapping on different layers, tilted 2-4°;",
+        "  - a rotated spine of type down one edge;",
+        "  - a panel of colour behind a short line, or a single heavy rule.",
+        "",
         "## What to write",
-        "Write 2-3 fronts and one back as compositions. Each slot is {photo, x, y, w, h}",
-        "as fractions of the trim page; each zone is {roles, x, y, w, h} with optional",
-        "align, valign, font, scale, caps, panel and text. Ornaments are 0-4 groups",
-        "{kind, density}; rules are {x1, y1, x2, y2, token, weight}. Coordinates are",
-        "from the top-left. Photographs never stretch: the engine crops around the",
-        "faces unless a slot sets focus [x, y].",
+        "Write 2-3 fronts and one back. Each is one page you have composed: name it",
+        "after the idea. Coordinates are fractions from the top-left; photographs",
+        "never stretch (the engine crops around the faces unless a slot sets focus).",
         "",
         "Everything is checked by ./ccb layout; errors stop the save, warnings are",
         "notes. Then ./ccb check, ./ccb see, ./ccb render, ./ccb qa.",
         "",
         "## Shape of the file",
         json.dumps({
-            "front": {"name": "your name", "side": "front", "slots": [], "zones": [],
-                      "ornaments": [], "lines": []},
+            "front": {
+                "name": "your name", "side": "front",
+                "background": {"photo": 0, "scrim": 0.45, "scrim_from": "bottom"},
+                "shapes": [{"kind": "band", "x": 0, "y": 0.72, "w": 1, "h": 0.28,
+                            "fill": "panel", "opacity": 0.9}],
+                "slots": [], "zones": [], "ornaments": [], "lines": [],
+            },
             "back": {"name": "back", "side": "back", "slots": [], "zones": [],
-                     "ornaments": [], "lines": []},
+                     "ornaments": [], "lines": [], "chrome": {"border": "none"}},
         }, indent=2),
     ]
     return "\n".join(lines)
