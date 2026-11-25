@@ -159,7 +159,7 @@ its own resolution, measured contrast on every text block.
 ## What is in here
 
 ```
-christmas-card-studio/
+christmas-card-designer/
 ├── AGENTS.md                    the workflow the AI follows
 ├── PROMPT.md                    what to type in OpenCode
 ├── setup.sh                     one-time setup (packages + fonts)
