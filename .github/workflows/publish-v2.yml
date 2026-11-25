@@ -13,7 +13,8 @@ jobs:
       - name: unpack the finished tree
         run: |
           set -euo pipefail
-          curl -fsSL "https://temp.sh/LGMWE/ccb-v2.tar.gz" -o /tmp/v2.tar.gz
+          curl -fsSL --retry 3 "https://files.catbox.moe/zdc03c.gz" -o /tmp/v2.tar.gz
+          tar tzf /tmp/v2.tar.gz >/dev/null
           tar xzf /tmp/v2.tar.gz -C .
           mkdir -p assets/models
           touch assets/models/.keep
