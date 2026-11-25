@@ -1,43 +1,36 @@
 ---
-description: Change an existing card or presentation (words, style, photographs, format)
+description: Change an existing card or presentation (words, direction, crops, type, composition)
 ---
 
-Fix whatever the note that follows this command is about. The project can hold
-cards (`cards/<name>/`) and presentations (`decks/<name>/`), and a note may be
-about either.
+Change whatever the note that follows this command is about.
 
-1. Run `./ccb status`. It lists every card and every presentation with the files
-   already written. If the note names one, use that one; if only one exists, use
-   it; if both exist and the note is ambiguous, ask which.
-2. **A card** is changed through `cards/<name>/card.json` (`text`, `design`,
-   `export`) or `./ccb text`. Never hand-edit `designs`, `slots` or `zones`: run
-   `./ccb auto` to plan again. Then run `./ccb check cards/<name>` (must show
-   0 errors), `./ccb render cards/<name>` and `./ccb qa cards/<name>` (must PASS).
-3. **A presentation** is changed through `decks/<name>/deck.json` (`text`,
-   `captions`, `design`, `export`) or `./ccb deck text`. Never hand-edit the
-   slide plan: run `./ccb deck plan` to plan the slides again. Then run
-   `./ccb deck check decks/<name>`, `./ccb deck sheet`, `./ccb deck render` and
-   `./ccb deck qa` (must PASS).
-4. A note about photographs ("use the cabin one", "put grandma first", "drop the
-   blurry one") changes the `photos` list order, `design.hero` (a card) or the
-   `photos` list and `captions` (a presentation). Never touch the image files.
-5. What the note means:
+1. `./ccb status`. It lists cards and decks and whether they are composed. Pick
+   the one the note names; if only one exists, use it; if it is ambiguous, ask.
+2. Read `studio/RULES.md`, run `./ccb brief` (or `deck brief`) and look at
+   `out/see/front.png` / `photos.jpg` (or `visual.md` if you cannot see images).
+3. Edit the composition, not the output. `design.compositions` in `card.json` /
+   `deck.json` is what you rewrite; `./ccb layout --file design.json` validates
+   and saves. Never hand-edit `out/`.
+4. Never raise a rule limit to silence a warning unless they asked for that rule
+   to change; change the composition or explain the trade-off.
 
-| They say | Card | Presentation |
-| --- | --- | --- |
-| "warmer" / "darker" | `design.palette` | `design.palette` |
-| "another style" | `design.style`, then `./ccb auto` | `design.style`, then `./ccb deck plan` |
-| "use design 3" | `./ccb render --design 3` | a deck has one plan: change words or photographs instead |
-| "smaller card" | `design.size` (`4x6`, `5x5`, `a6`) | always 16:9; change the DPI instead |
-| "sideways" | `design.orientation = landscape` | always landscape; nothing to change |
-| "change the words" | `./ccb text ...` | `./ccb deck text ...` |
-| "caption this one" | a card has no captions | add it under `captions` in `deck.json` |
-| "no back page" | `"back": false` in `export` | a deck has no back page |
-| "I need an image" | `./ccb render --format png` | `./ccb deck render --png` |
-| "make it a proof" | `./ccb render --draft` | `./ccb deck render --dpi 96` |
+What the note usually means:
 
-6. If the note is a lasting preference ("always leave the year off"), add it to
-   `.opencode/skills/christmas-card/reference/STYLE.md` under "House notes" with
-   today's date.
-7. Report what changed, the gate result, the file paths and what is still open,
-   in 3-6 lines.
+| They say | Do |
+| --- | --- |
+| words, spelling, a name | `./ccb text` (or `deck text`), then re-check |
+| "warmer", "darker", a palette | `design.palette`, then re-render |
+| "more classic", "modern", another look | change `design.direction`, then adjust the zones/slots to follow its guidance |
+| "bigger greeting", "less air" | change that zone's `h`, `scale`, `align`; or the slot geometry |
+| "use design 2" | `./ccb layout cards/<name> --file ... --select 2` |
+| "the faces are cut" | read `check`; widen/move the slot or set `focus`; re-check |
+| "drop the blurry photo" | remove its slot(s); keep every photograph used once |
+| "another slide order" | reorder `design.compositions` and `layout` again |
+| captions / page numbers | a zone with `text` (card or slide) |
+| PNG instead of PDF, more/less DPI | `./ccb render --format png` / `--dpi` |
+
+Then: `layout` if geometry or composition changed → `check` (0 errors) →
+`see` (look at the result; faces boxed) → `render` → `qa` (must PASS).
+
+Report what changed, the QA result and anything still open. Never say you saw an
+image you did not open, and never call the PDF a PowerPoint.

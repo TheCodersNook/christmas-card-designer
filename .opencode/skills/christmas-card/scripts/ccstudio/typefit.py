@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
@@ -34,15 +35,8 @@ FAMILIES: dict[str, dict] = {
 FONT_CHOICES = [(k, v["label"]) for k, v in FAMILIES.items()]
 
 # Sizes are a fraction of the card's short side (at export resolution).
-ROLE_SIZES = {
-    "greeting": 0.082,
-    "family": 0.050,
-    "message": 0.027,
-    "signature": 0.031,
-    "year": 0.021,
-    "caption": 0.017,
-    "monogram": 0.150,
-}
+# They come from studio/rules.json; edit them there, not here.
+ROLE_SIZES = dict(config.ROLE_SIZES)
 
 CHAR_MAP = {
     "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
@@ -286,8 +280,13 @@ def fit(text: str, role: str, family: str, weight: int, italic: bool, uppercase:
 
 
 def fit_stack(roles: list[tuple[str, str]], zones_style: config.Style, width: float, height: float,
-              short: float, scale: float = 1.0, book: FontBook | None = None) -> list[Block]:
-    """Fit greeting/family/message/... into one zone, shrinking the whole stack together."""
+              short: float, scale: float = 1.0, book: FontBook | None = None,
+              font: str = "", align: str = "", caps: bool | None = None) -> list[Block]:
+    """Fit greeting/family/message/... into one zone, shrinking the whole stack together.
+
+    ``font``, ``align`` and ``caps`` come from the composition's zone and override
+    the direction, so the agent can deviate without editing the rulebook.
+    """
     book = book or BOOK
     items = [(role, clean(text)) for role, text in roles if clean(text)]
     if not items or width < 8 or height < 8:
@@ -295,6 +294,8 @@ def fit_stack(roles: list[tuple[str, str]], zones_style: config.Style, width: fl
     style = zones_style
 
     def family_for(role: str) -> str:
+        if font in ("heading", "body", "script"):
+            return getattr(style, font)
         if role == "greeting":
             return style.script if style.greeting_font == "script" else (style.heading if style.greeting_font == "heading" else style.body)
         if role == "family":
@@ -304,17 +305,24 @@ def fit_stack(roles: list[tuple[str, str]], zones_style: config.Style, width: fl
         return style.body
 
     def italic_for(role: str) -> bool:
-        return role == "signature" and style.name_font != "script"
+        return role == "signature" and style.name_font != "script" and font != "script"
 
     def build(k: float) -> list[Block]:
         blocks = []
         for role, text in items:
+            rules = config.role_rules(role)
             size = ROLE_SIZES.get(role, 0.03) * short * scale * k
             family = family_for(role)
+            tracking_rule = rules.get("tracking", "direction")
+            tracking = style.tracking if tracking_rule == "direction" else float(tracking_rule)
+            upper_rule = rules.get("uppercase", "direction")
+            wants_caps = style.caps if upper_rule == "direction" else bool(upper_rule)
+            if caps is not None:
+                wants_caps = caps
             # Capitals belong to the roman faces; a script name is never shouted.
-            uppercase = role in ("greeting", "family", "year") and style.caps and family != style.script
-            tracking = style.tracking if role in ("greeting", "family", "year") else 0.0
-            weight = style.weight if role in ("greeting", "family") else 400
+            uppercase = wants_caps and family != style.script
+            weight = style.weight if rules.get("weight", "body") == "heading" else 400
+            spacing = float(rules.get("spacing", 1.42))
             # Never break a word: cap the size so the longest word fits the zone.
             display = text.upper() if uppercase else text
             longest = max(display.split(), key=len, default="")
@@ -322,11 +330,12 @@ def fit_stack(roles: list[tuple[str, str]], zones_style: config.Style, width: fl
             pw = measure(longest, probe, tracking * 100)
             if pw > 1:
                 size = min(size, width / pw * 100 * 0.98)
-            lines_cap = {"greeting": 3, "family": 2, "message": 14, "signature": 2, "year": 1}.get(role, 4)
+            lines_cap = int(rules.get("max_lines", 4))
+            chosen = align or style.align
+            chosen = "right" if chosen == "right" else ("left" if chosen == "left" else "center")
             blocks.append(fit(text, role, family, weight, italic_for(role), uppercase, tracking,
-                              1.12 if role in ("greeting", "family") else 1.42,
-                              width, height, max(5.0, size), max(5.0, size * 0.5), lines_cap,
-                              "left" if style.align == "left" else "center", book=book))
+                              spacing, width, height, size, max(5.0, size * 0.5), lines_cap,
+                              chosen, book=book))
         return blocks
 
     for k in (1.0, 0.94, 0.88, 0.82, 0.76, 0.70, 0.64, 0.58, 0.52, 0.46, 0.40):

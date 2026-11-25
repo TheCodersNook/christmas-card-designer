@@ -7,7 +7,7 @@ zone, and decoration avoids both.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -48,7 +48,8 @@ def _paper(region: Image.Image, seed: int) -> Image.Image:
 
 
 def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: int,
-                 bleed: bool = True, texture: bool | None = None) -> RenderResult:
+                 bleed: bool = True, texture: bool | None = None,
+                 page: str = "front") -> RenderResult:
     if isinstance(design, dict):
         design = layouts.Design.from_dict(design)
     style = spec.style
@@ -67,7 +68,12 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
     # Where decoration may not go: photograph slots and text zones.
     keepout = [(s.x * trim_w, s.y * trim_h, s.w * trim_w, s.h * trim_h) for s in design.slots]
     keepout += [(z.x * trim_w, z.y * trim_h, z.w * trim_w, z.h * trim_h) for z in design.zones]
-    decorate.decorate(draw, style, palette, trim_w, trim_h, keepout, seed=_seed(spec.name))
+    # A composition may name its own ornaments; that replaces the direction's
+    # decoration (creative control) instead of piling both on.
+    if design.ornaments:
+        _draw_ornaments(draw, style, palette, trim_w, trim_h, keepout, design, spec.name)
+    else:
+        decorate.decorate(draw, style, palette, trim_w, trim_h, keepout, seed=_seed(spec.name))
 
     loaded: dict[int, photo_mod.Photo] = {}
     photo_rects: list[list[int]] = []
@@ -78,17 +84,21 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
             continue
         x, y = int(round(slot.x * trim_w)), int(round(slot.y * trim_h))
         w, h = max(2, int(round(slot.w * trim_w))), max(2, int(round(slot.h * trim_h)))
-        tile = photo_mod.cover(photo.image, w, h, focus_y=0.42)
-        frame_w = max(1, int(round(short * 0.0022))) if style.photo_frame == "border" else 0
+        # Face-aware crop: the people decide where a slot looks, unless the
+        # composition set an explicit focus.
+        fx, fy = slot.focus if slot.focus else photo.face_focus
+        tile = photo_mod.cover(photo.image, w, h, focus_x=fx, focus_y=fy)
+        treatment = (slot.treatment or style.photo_frame or "plain").lower()
+        frame_w = max(1, int(round(short * 0.0022))) if treatment == "border" else 0
         if frame_w:
             tile = photo_mod.frame(tile, palette.panel, frame_w)
-        if style.radius > 0:
+        if style.radius > 0 and treatment != "plain":
             tile = photo_mod.rounded(tile, style.radius * short)
-        if style.photo_frame == "shadow":
+        if treatment == "shadow":
             tile = photo_mod.shadowed(tile, spread=max(2, int(short * 0.008)), opacity=52)
             x -= int(short * 0.008)
             y -= int(short * 0.008)
-        if style.photo_frame == "tilt" and slot is design.slots[0]:
+        if treatment == "tilt":
             tile = photo_mod.tilt(tile, -2.1 if slot.photo % 2 else 2.1)
             x = int(x + (w - tile.width) / 2)
             y = int(y + (h - tile.height) / 2)
@@ -98,6 +108,8 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
     # The printed border goes over the photographs, so a full-bleed panorama
     # still reads as a framed card instead of a cropped picture.
     decorate.border(draw, style, palette, trim_w, trim_h, style.margin * short)
+    for line in design.lines:
+        _draw_line(draw, line, palette, trim_w, trim_h, short)
 
     blocks: list[dict[str, Any]] = []
     for zone in design.zones:
@@ -105,7 +117,7 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
 
     canvas.paste(art, (b, b))
     return RenderResult(canvas, {
-        "page": "front",
+        "page": page,
         "design": design.label,
         "engine": design.engine,
         "card_in": [w_in, h_in],
@@ -121,6 +133,36 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
 
 def _seed(name: str) -> int:
     return abs(hash(name)) % 100_000
+
+
+def _draw_ornaments(draw: ImageDraw.ImageDraw, style: config.Style, palette: config.Palette,
+                    trim_w: int, trim_h: int, keepout: list[tuple[float, float, float, float]],
+                    design: layouts.Design, name: str) -> None:
+    for i, item in enumerate(design.ornaments):
+        kind = str(item.get("kind", "none")).lower()
+        if kind not in ("holly", "snow", "stars", "confetti"):
+            continue
+        density = item.get("density", style.density)
+        try:
+            density = max(0.0, min(1.6, float(density)))
+        except (TypeError, ValueError):
+            density = style.density
+        variant = replace(style, decoration=kind, density=density)
+        decorate.decorate(draw, variant, palette, trim_w, trim_h, keepout,
+                          seed=_seed(name) + 97 * (i + 1))
+
+
+def _draw_line(draw: ImageDraw.ImageDraw, line: dict[str, Any], palette: config.Palette,
+               trim_w: int, trim_h: int, short: int) -> None:
+    try:
+        x1, y1 = float(line["x1"]) * trim_w, float(line["y1"]) * trim_h
+        x2, y2 = float(line["x2"]) * trim_w, float(line["y2"]) * trim_h
+        weight = float(line.get("weight", 1.0))
+    except (KeyError, TypeError, ValueError):
+        return
+    color = palette.token(str(line.get("token", "accent")))
+    width = max(1, int(round(short * 0.0016 * max(0.25, min(3.0, weight)))))
+    draw.line((x1, y1, x2, y2), fill=color, width=width)
 
 
 def _photo(spec: CardSpec, index: int, cache: dict[int, photo_mod.Photo]) -> photo_mod.Photo | None:
@@ -157,21 +199,30 @@ def _draw_zone(art: Image.Image, draw: ImageDraw.ImageDraw, zone: layouts.Zone, 
     if w < 8 or h < 8:
         return []
     text = spec.text
-    items = [(role, text.get(role, "")) for role in zone.roles]
+    items = [(role, zone.text or text.get(role, "")) for role in zone.roles]
     items = [(r, t) for r, t in items if typefit.clean(t)]
     if not items:
         return []
     if zone.panel:
         draw.rounded_rectangle((x, y, x + w, y + h), radius=short * 0.012, fill=palette.panel)
     pad = short * 0.012
-    align = "left" if style.align == "left" else "center"
-    blocks = typefit.fit_stack(items, style, w - 2 * pad, h - 2 * pad, short, book=typefit.BOOK)
+    chosen = zone.align or style.align
+    align = "right" if chosen == "right" else ("left" if chosen == "left" else "center")
+    blocks = typefit.fit_stack(items, style, w - 2 * pad, h - 2 * pad, short,
+                              scale=max(0.35, min(2.2, zone.scale)),
+                              book=typefit.BOOK, font=zone.font, align=zone.align,
+                              caps=zone.caps)
     color = typefit.readable_text(palette.panel if zone.panel else palette.bg,
                                   palette.on_panel if zone.panel else palette.ink,
                                   palette.ink, palette.soft, "#FFFFFF", "#111111")
-    top = y + pad
     total = sum(b.height for b in blocks)
     free = max(0.0, (h - 2 * pad) - total)
+    if zone.valign == "top":
+        top = y + pad
+    elif zone.valign == "bottom":
+        top = y + h - pad - total
+    else:
+        top = y + pad + free / 2
     minimum_gap = max(2.0, (min((b.size for b in blocks), default=12)) * 0.30)
     # A roomy zone (an editorial column) spreads its paragraphs instead of
     # leaving a block of empty paper at the bottom.
@@ -182,7 +233,7 @@ def _draw_zone(art: Image.Image, draw: ImageDraw.ImageDraw, zone: layouts.Zone, 
     out = []
     for block in blocks:
         box = (x + pad, top, w - 2 * pad, block.height)
-        used = typefit.draw_block(draw, block, box, color, align=align, valign="top")
+        used = typefit.draw_block(draw, block, box, color, align=align, valign=zone.valign)
         out.append({
             "role": block.role,
             "size_px": block.size,

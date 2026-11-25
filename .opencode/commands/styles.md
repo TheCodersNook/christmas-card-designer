@@ -1,13 +1,15 @@
 ---
-description: Show the eight card styles, six palettes, six layouts and paper sizes
+description: Show the directions, palettes, paper and how to tune the rulebook
 ---
 
-Run `./ccb styles` and `./ccb sizes`, then summarise in a short list:
+Run `./ccb directions` and `./ccb sizes`, then summarise briefly:
 
-- the eight styles with their one-line look;
-- the six palettes;
-- the six layouts and which photographs each suits;
-- the trim sizes and what each is for.
+- each direction with its one-line character and its guidance;
+- the palettes in `studio/rules.json` and which direction uses which;
+- the paper sizes, the bleed and the DPI range;
+- the face rules and the type floor, in one line each.
 
-Then recommend two styles for the photographs the person has, and say what to run
-to try them. Do not change any files.
+Then say plainly that these are defaults, not templates: the agent composes each
+page, and the person can tune any number in `studio/rules.json` or any principle
+in `studio/RULES.md`. Name one or two directions that would suit the photographs
+they have and what to run (`./ccb brief`, `./ccb see`). Do not change files.

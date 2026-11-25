@@ -1,168 +1,60 @@
 ---
 name: christmas-card
-description: The Christmas studio as one self-contained skill. It turns a family's own photographs into print-ready Christmas cards - a greeting, a family name, a message and a signature composed with six deterministic layout engines, eight card styles, six palettes, five trim sizes, decoration that avoids faces, and a true-size 300 DPI PDF/PNG/JPEG export with bleed and crop marks - and into 16:9 Christmas presentations: a cover, a statement, numbered photographic plates, a gallery and a closing, exported as a 150 DPI PDF plus optional PNGs. It ships its own engine (Python + Pillow + ReportLab, runs anywhere), so it works outside OpenCode too. Use it whenever someone gives photographs and asks for a Christmas card, a holiday card, a family card, a photo card, a card to print, "make our card", a matching back page, a Christmas presentation, a slideshow, a year-in-review deck, or names this skill.
+description: A rules-driven Christmas studio. It turns a family's own photographs into print-ready Christmas cards and 16:9 presentations, not from templates but from an editable rulebook (studio/rules.json + studio/RULES.md) and free compositions the agent writes. Includes measured typography, YuNet face detection with landmarks, face-aware cropping, a gate that refuses text on photographs and cut faces, annotated previews so the agent can see photographs and its own work, true-size 300 DPI PDF/PNG/JPEG with bleed and crop marks, and 16:9 PDF/PNG decks. Use it whenever someone gives photographs and asks for a Christmas card, holiday card, family card, photo card, card to print, "make our card", a matching back, a Christmas presentation, slideshow, year-in-review deck, or names this skill.
 ---
 
-# christmas-card: a card and presentation studio, end to end
+# christmas-card: a rules-driven card and presentation studio
 
-The photographs are the work. Everything else - the greeting, the paper, the
-margin, the rule, the holly - exists so the photographs look like they were
-printed (or projected) on purpose.
+The photographs are the work. Everything else — the greeting, the paper, the
+margin, the rule, the holly — exists so the photographs look printed on purpose.
 
-Two outputs share one engine, one set of styles and the same rules: a **card**
-(a small printed object, 300 DPI, bleed and crop marks) and a **presentation**
-(16:9, one idea per slide, no bleed).
+Two outputs share one engine and one rulebook: a **card** (small, 300 DPI, bleed
+and crop marks) and a **presentation** (16:9, no bleed). Both are lists of
+**compositions**: photograph slots, text zones, ornaments and rules in fractions
+of the page.
 
-The judgements that make a card look designed are in the engine, not in the
-model: measured typography, physical spacing, cover crops, deterministic
-decoration, and a gate that refuses overlaps. A free model is enough. Your job
-is to run the engine, read its report, fix the copy, and choose the design.
+**There are no templates.** The studio does not pick a design for you. It gives
+you `studio/rules.json` (the numbers), `studio/RULES.md` (the judgement and the
+latitude), and an engine that validates and renders what you write. The agent
+designs; the gate refuses what breaks the rules.
 
-**Read before the first card in a session:** `reference/STYLE.md` (what makes a
-card look designed), `reference/PLAN.md` (the card.json schema and every
-command) and `AGENTS.md` (the workflow).
+## Read before you design
 
-## Never break these
+1. `studio/RULES.md` — all of it. It is short enough and it is the brief.
+2. `./ccb brief <card>` — the rulebook for that page, the photographs, faces,
+   words, allowed vocabulary, and the shape of the file.
+3. `./ccb see <card>` and open `out/see/photos.jpg` (or read `visual.md` if your
+   model cannot see images). Know where the faces are before placing a crop.
 
-1. **Their words, their names.** Never invent a family name, a year, a greeting
-   or a fact. If a field is missing, ask for it or leave it out; empty fields
-   collapse instead of leaving gaps.
-2. **Photographs are never altered.** `inputs/` is read-only. The engine
-   cover-crops in memory; it never stretches, filters, whitens or replaces a
-   photograph. Do not run an image editor over their files.
-3. **Text never sits on a face.** Every engine reserves text zones before any
-   photograph is placed, and the gate fails if a zone and a slot overlap. Never
-   hand-edit `slots` or `zones` to squeeze text over a picture.
-4. **Print truth.** The PDF page is the real physical size plus the 0.125 in
-   bleed, with crop marks outside the trim. Never claim a size you did not
-   export at 300 DPI. `./ccb qa` reads the exported files back; the gate is what
-   you report, not your impression.
-5. **One style, one palette.** A card has one style and one palette. Do not mix
-   two decoration sets to "fill space".
-6. **Leave the margin.** Text stays inside the style's margin. Full-bleed
-   photographs are a deliberate engine choice (the panorama), not something to
-   copy into other designs.
-7. **Nothing is promised that cannot be measured.** Do not say a photograph is
-   sharp, a face is well framed, or a card "looks great". You cannot see it:
-   say what the report measured, and ask them to look at `out/designs.jpg`.
-8. **No stock or generated imagery in their card.** Only the photographs they
-   supplied, plus vector decoration the engine draws.
-9. **A presentation is not a card.** It is always 16:9, has no bleed, no crop
-   marks, no back page and no trim size, and its deliverable is a PDF (plus PNGs
-   when asked) - never promise a `.pptx`.
+## Compose
 
-## The vocabulary
+Write two or three fronts and one back as JSON. A slot is
+`{photo, x, y, w, h, treatment?, focus?}`. A zone is
+`{roles, x, y, w, h, align?, valign?, font?, scale?, caps?, panel?, text?}`.
+Ornaments are `{kind, density}`; rules are `{x1, y1, x2, y2, token, weight}`.
 
-- **Six layout engines**, all deterministic:
-  - `grid` - a uniform grid of photographs, text above and below;
-  - `hero` - one large hero photograph and a strip of the rest;
-  - `mosaic` - a recursive proportional split, cells shaped by the photographs;
-  - `editorial` - a text column beside a photographic plate;
-  - `postcard` - a big hero, a photo strip and a roomy message block;
-  - `banner` - an edge-to-edge panorama band, framed by the printed border.
+- Coordinates are fractions from the top-left of the trim page.
+- Text never overlaps a photograph; the gate rejects it.
+- Let the faces choose the crop (omit `focus`) unless you have a better idea.
+- Follow a direction for coherence, then depart once: a zone's `scale`, `font`,
+  `caps`, `align`, a panel, an ornament, a rule.
+- Give every composition a name and a `notes` line.
 
-  With `layout: "auto"` the engine runs all six, scores them (photograph
-  coverage, crop loss, visual balance, text room) and keeps the best `variants`.
-- **Eight styles** (`./ccb styles`): Classic Christmas, Modern Minimalist,
-  Traditional Holiday, Luxury Editorial, Scandinavian, Vintage Christmas,
-  Playful Festive, Photo-First. A style changes fonts, case, tracking, spacing,
-  border, photo treatment and decoration - not just colour.
-- **Six palettes**: evergreen, cranberry, midnight, nordic, brass, peppermint.
-- **Type roles**: `greeting`, `family`, `message`, `signature`, `year`. All but
-  the greeting are optional; the greeting is what a card is for.
-- **Five slide kinds** for presentations: `cover`, `statement`, `hero` (a
-  numbered photographic plate), `grid` (the gallery), `closing`. The planner uses
-  each photograph exactly once and keeps the strongest for the cover.
+Then `./ccb layout <card> --file design.json`. Errors mean it was not saved.
+Warnings are exact numbers: a face keeping 40%, a role at 6.4 pt, a photograph
+used at 2.1x its pixels. Fix the composition, not the limits.
 
-## The fast path
+## Prove it
 
-```
-./ccb samples                                   # six demo illustrations, no files needed
-./ccb make inputs/*.jpg --name hayes-2026 \
-    --greeting "Merry Christmas" --family "The Hayes Family" \
-    --message "Wishing you a quiet, bright Christmas." \
-    --signature "with love, Anna and Tom" --year 2026
-```
+`./ccb check` (0 errors) → `./ccb see` (look at `front.png`; boxes mark zones
+and faces) → `./ccb render` → `./ccb qa` (PASS). For a deck:
+`./ccb deck check|see|render|qa`.
 
-One command: copies the photographs into `inputs/`, writes
-`cards/hayes-2026/card.json`, plans six designs, runs the gate, writes the
-contact sheet, exports the card and verifies the files. Follow it with
-`./ccb check` and `./ccb render` whenever you change anything.
+Report the folder, size, DPI, QA result and the design decisions. Never say you
+saw an image you did not open, and never call a PDF a PowerPoint.
 
-For the presentation from the same photographs:
+## Tuning
 
-```
-./ccb deck make inputs/*.jpg --name hayes-2026 \
-    --title "The Hayes Family" --subtitle "2026 in photographs" \
-    --greeting "Merry Christmas" --message "A year of small adventures." \
-    --signature "with love, Anna and Tom" --year 2026
-```
-
-It plans the slides, gates them, writes `out/slides.jpg`, exports the 16:9 PDF
-and verifies it. Add `--png` for one image per slide.
-
-## The run (gates in order)
-
-0. **Get the photographs in.** They may give a folder, a list, drag files into
-   the chat, or paste paths (possibly starting with `@`, possibly escaped). Run
-   `./ccb add "<path>"` for each, or pass them straight to `./ccb new`. The
-   originals are never modified.
-1. **Start the card:** `./ccb new <photos...> --name <family-year> --style classic
-   --size 5x7 [--landscape]`. This plans designs and writes `report.md`.
-2. **Get the words right.** Read `cards/<name>/report.md`. Set them with
-   `./ccb text cards/<name> --greeting "..." --family "..." --message "..."
-   --signature "..." --year "..."`, or edit `text` in `card.json`. Keep the
-   message to two or three sentences: it is a card, not a letter.
-3. **Read the plan.** `report.md` lists the photographs, the six designs, their
-   scores and every to-do. A good card usually has a hero photograph; set
-   `design.hero` to that file name when the automatic choice is wrong, or
-   reorder `photos` so the best picture comes first.
-4. **Gate:** `./ccb check cards/<name>`. It must show `0 errors`. Fix each
-   warning or say why you kept it. The gate measures geometry, real fitted type
-   sizes, contrast and whether a photograph is being used far above its own
-   resolution.
-5. **Look before you render:** `./ccb sheet cards/<name>` writes
-   `out/designs.jpg` - all six designs at once. Ask them to look at it, and ask
-   which number they prefer. Never claim you looked at it yourself.
-6. **Choose and render:** `./ccb render cards/<name> --design 2`. Add
-   `--format png` or `--format jpeg` when they want images rather than a PDF,
-   `--no-back` for a one-sided card, `--draft` for a 120 DPI proof.
-7. **Verify:** `./ccb qa cards/<name>`. It re-reads the files: PDF page boxes,
-   page count, PNG pixel dimensions, DPI metadata. It must say `PASS`.
-8. **Report back** in 5-8 lines: the design chosen and why, the words used, the
-   output path, the physical size and DPI, and what is still open (a missing
-   name, a low-resolution photograph, a design they have not chosen yet).
-
-## Where it runs
-
-- **In this project:** everything through `./ccb` from the project folder (see
-  `README.md` for setup on macOS, Linux and Windows/WSL).
-- **Any terminal:** `PYTHONPATH=.opencode/skills/christmas-card/scripts python -m
-  ccstudio ...` after `pip install numpy pillow reportlab`.
-- **claude.ai or another sandbox:** `pip install numpy pillow reportlab`, then
-  the same `-m ccstudio` commands. Fonts are downloaded by `./ccb fonts`; with
-  no fonts the engine falls back to a system TrueType font and `./ccb doctor`
-  says so.
-
-## When they give feedback
-
-| They say | Do this |
-| --- | --- |
-| "try another style" / "less classic" | `--style modern` (or `editorial`, `nordic`, `vintage`, `joyful`, `gallery`) in `card.json`, then `./ccb auto` |
-| "warmer" / "darker" / "more Christmassy" | change `design.palette` (evergreen, cranberry, midnight, nordic, brass, peppermint) |
-| "use design 3" | `./ccb render cards/<name> --design 3` |
-| "bigger photos" | pick the `banner`, `gallery` or `editorial` layout, or `--style gallery` |
-| "less busy" | `--style modern` or `../card/out` padding: use `editorial`; drop photographs they do not need |
-| "put grandma first" | move that file to the front of `photos`, set `design.hero`, then `./ccb auto` |
-| "change the wording" | `./ccb text ...`, then `./ccb check` and `./ccb render` |
-| "smaller card" / "different paper" | `--size 4x6`, `5x5`, `a6`, `a2`, or `--landscape` |
-| "I want an image, not a PDF" | `./ccb render cards/<name> --format png` |
-| "no back page" | `"back": false` in `export`, or `./ccb render --no-back` |
-| "bleed/crop marks" | `--no-bleed` to drop them; they are on by default |
-| "make a slideshow / presentation too" | `./ccb deck make <photos> --name x --title ...` |
-| "caption this photograph" | add it under `captions` in `decks/<name>/deck.json`, then `./ccb deck plan` |
-| "one image per slide" | `./ccb deck render decks/<name> --png` |
-| "bigger / smaller slides" | the deck is fixed at 16:9; change `--dpi` instead |
-
-When a note is a lasting preference ("always leave the year off"), add it to
-`reference/STYLE.md` under "House notes" with the date, so it holds next year.
+The person can tune everything: palettes, type scales, margins, the face rules,
+the eight directions' guidance, and §7 of `RULES.md` (what may be invented).
+Edit those files, not the Python.

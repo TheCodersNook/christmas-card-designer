@@ -5,11 +5,13 @@ every crop happens on an in-memory copy.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
+
+from . import faces as faces_mod
 
 SUPPORTED = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic"}
 
@@ -27,6 +29,7 @@ class Photo:
     interest: float             # 0..1, detail + contrast
     brightness: float           # 0..1
     saturation: float           # 0..1
+    faces: list = field(default_factory=list)   # faces_mod.Face, fractions of the image
 
     @property
     def aspect(self) -> float:
@@ -35,6 +38,15 @@ class Photo:
     @property
     def megapixels(self) -> float:
         return self.width * self.height / 1_000_000
+
+    @property
+    def face_count(self) -> int:
+        return len(self.faces)
+
+    @property
+    def face_focus(self) -> tuple[float, float]:
+        """A crop focus that keeps the people in frame (or the usual upper centre)."""
+        return faces_mod.focus(self.faces, (0.5, 0.42))
 
     @property
     def orientation(self) -> str:
@@ -63,7 +75,13 @@ def load(path: str | Path) -> Photo:
     except (OSError, ValueError) as exc:
         raise PhotoError(f"cannot read {p.name}: {exc}") from exc
     interest, brightness, saturation = _analyse(img)
-    return Photo(p, img, img.width, img.height, interest, brightness, saturation)
+    key = (str(p.resolve()), p.stat().st_mtime_ns, p.stat().st_size)
+    if key not in _FACE_CACHE:
+        _FACE_CACHE[key] = faces_mod.detect(img)
+    return Photo(p, img, img.width, img.height, interest, brightness, saturation, _FACE_CACHE[key])
+
+
+_FACE_CACHE: dict[tuple, list] = {}
 
 
 def _analyse(img: Image.Image) -> tuple[float, float, float]:

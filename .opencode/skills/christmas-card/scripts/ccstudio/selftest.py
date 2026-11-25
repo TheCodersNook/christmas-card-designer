@@ -1,107 +1,159 @@
-"""End-to-end self test with generated photographs - no sample files needed."""
+"""End-to-end self-test: compositions in, checked PDFs and previews out."""
 from __future__ import annotations
 
 import shutil
 import tempfile
-import time
 from pathlib import Path
 
-from . import auto, check as gate, config, export as export_mod, layouts, samples, sheet as sheet_mod
-from .photos import load
+from . import check as gate, compose, config, deck as deck_mod, export as export_mod, faces, samples
+from . import see, sheet
 from .spec import CardSpec
 
 
-def run(keep: bool = False) -> int:
-    started = time.time()
-    tmp = Path(tempfile.mkdtemp(prefix="ccb-selftest-"))
-    failures: list[str] = []
-    checks: list[str] = []
+FRONT = {
+    "name": "Quiet hero",
+    "side": "front",
+    "slots": [{"photo": 0, "x": 0.07, "y": 0.08, "w": 0.86, "h": 0.50, "treatment": "border"}],
+    "zones": [
+        {"roles": ["greeting"], "x": 0.07, "y": 0.62, "w": 0.86, "h": 0.10, "align": "center"},
+        {"roles": ["family"], "x": 0.07, "y": 0.725, "w": 0.86, "h": 0.055},
+        {"roles": ["message"], "x": 0.07, "y": 0.79, "w": 0.86, "h": 0.075},
+        {"roles": ["signature", "year"], "x": 0.07, "y": 0.872, "w": 0.86, "h": 0.058},
+    ],
+    "ornaments": [{"kind": "holly", "density": 0.5}],
+    "lines": [{"x1": 0.42, "y1": 0.60, "x2": 0.58, "y2": 0.60, "token": "accent", "weight": 1}],
+}
 
-    def ok(label: str, condition: bool, detail: str = "") -> None:
-        checks.append(f"  {'ok  ' if condition else 'FAIL'} {label}{(' - ' + detail) if detail and not condition else ''}")
-        if not condition:
-            failures.append(label + (f" ({detail})" if detail else ""))
+BACK = {
+    "name": "Back",
+    "side": "back",
+    "slots": [],
+    "zones": [
+        {"roles": ["message"], "x": 0.12, "y": 0.24, "w": 0.76, "h": 0.34, "align": "center"},
+        {"roles": ["signature"], "x": 0.12, "y": 0.62, "w": 0.76, "h": 0.09},
+        {"roles": ["year"], "x": 0.12, "y": 0.75, "w": 0.76, "h": 0.05},
+    ],
+    "ornaments": [],
+    "lines": [{"x1": 0.44, "y1": 0.60, "x2": 0.56, "y2": 0.60, "token": "accent", "weight": 1}],
+}
 
-    try:
-        photo_paths = samples.write_demo_photos(tmp / "inputs")
-        ok("six demo photographs drawn", len(photo_paths) == 6, str(len(photo_paths)))
-        photos = [load(p) for p in photo_paths]
-        ok("every demo photograph loads", all(p.megapixels > 0.4 for p in photos))
-        ok("shapes differ", len({p.orientation for p in photos}) >= 2)
+SLIDES = [
+    {
+        "name": "Cover",
+        "slots": [{"photo": 0, "x": 0.52, "y": 0.0, "w": 0.48, "h": 1.0}],
+        "zones": [
+            {"roles": ["title"], "x": 0.07, "y": 0.28, "w": 0.38, "h": 0.18, "align": "left", "font": "heading"},
+            {"roles": ["subtitle"], "x": 0.07, "y": 0.49, "w": 0.36, "h": 0.08, "align": "left"},
+            {"roles": ["greeting"], "x": 0.07, "y": 0.68, "w": 0.36, "h": 0.09, "align": "left"},
+            {"roles": ["signature"], "x": 0.07, "y": 0.82, "w": 0.36, "h": 0.06, "align": "left"},
+        ],
+        "ornaments": [],
+        "lines": [{"x1": 0.07, "y1": 0.64, "x2": 0.40, "y2": 0.64, "token": "accent", "weight": 1}],
+    },
+    {
+        "name": "Photograph",
+        "slots": [{"photo": 1, "x": 0.0, "y": 0.0, "w": 0.56, "h": 1.0}],
+        "zones": [
+            {"roles": ["message"], "x": 0.63, "y": 0.34, "w": 0.30, "h": 0.24, "align": "left"},
+            {"roles": ["caption"], "x": 0.63, "y": 0.62, "w": 0.30, "h": 0.06, "text": "First snow"},
+        ],
+        "ornaments": [],
+        "lines": [],
+    },
+    {
+        "name": "Gallery",
+        "slots": [
+            {"photo": 0, "x": 0.07, "y": 0.10, "w": 0.26, "h": 0.74},
+            {"photo": 1, "x": 0.37, "y": 0.10, "w": 0.26, "h": 0.74},
+            {"photo": 2, "x": 0.67, "y": 0.10, "w": 0.26, "h": 0.74},
+        ],
+        "zones": [{"roles": ["caption"], "x": 0.07, "y": 0.88, "w": 0.86, "h": 0.05, "text": "A quiet year"}],
+        "ornaments": [],
+        "lines": [],
+    },
+]
 
-        folder = tmp / "cards" / "selftest"
-        spec = CardSpec.create(folder, "selftest", [str(p) for p in photo_paths],
-                               style="classic", size="5x7")
-        spec.text.update({
-            "greeting": "Merry Christmas",
-            "family": "The Selftest Family",
-            "message": "Wishing you a warm, bright Christmas and a happy new year from all of us.",
-            "signature": "with love, Anna and Tom",
-            "year": "2026",
-        })
+
+def run() -> int:
+    failures = 0
+
+    def ok(label: str, condition: bool, note: str = "") -> None:
+        nonlocal failures
+        print(f"  {'ok  ' if condition else 'FAIL'} {label}{(' - ' + note) if note else ''}")
+        failures += 0 if condition else 1
+
+    demo = samples.write_demo_photos()
+    print("selftest: rules, compositions, faces, print")
+    with tempfile.TemporaryDirectory(prefix="ccb-test-") as tmp:
+        root = Path(tmp)
+        folder = root / "card"
+        folder.mkdir()
+        copied = []
+        for path in demo[:3]:
+            dest = folder / path.name
+            shutil.copy2(path, dest)
+            copied.append(dest.name)
+        spec = CardSpec.create(folder, "selftest", copied,
+                              direction="classic", size="5x7")
+        spec.text.update({"greeting": "Merry Christmas", "family": "The Test Family",
+                          "message": "A year of small adventures and a great deal of snow.",
+                          "signature": "with love, Anna and Tom", "year": "2026"})
         spec.save()
 
-        plan_started = time.time()
-        designs = auto.plan(spec)
-        plan_seconds = time.time() - plan_started
-        ok("six designs planned", len(designs) == 6, str(len(designs)))
-        ok("every design places every photograph",
-           all(len(d.slots) == len(photos) for d in designs))
-        ok("scores are sane", all(30 <= d.score <= 100 for d in designs))
-        ok("designs differ", len({d.engine for d in designs}) == len(designs))
+        issues, _ = compose.install(spec, {"front": FRONT, "back": BACK})
+        errors = [i for i in issues if i.level == "error"]
+        ok("compositions pass the rulebook", not errors,
+           "; ".join(i.message for i in errors[:2]))
+        ok("composition is saved", len(spec.front_compositions) == 1 and spec.back() is not None)
 
-        for design in designs:
-            report = gate.check(spec, design, dpi=300)
-            if report["errors"]:
-                failures.append(f"{design.engine}: {report['errors'][0]}")
-        ok("gate is clean for every design", not any(f for f in failures if ":" in f))
+        report = gate.check_card(spec, dpi=300)
+        ok("gate is clean", not report["errors"], "; ".join(report["errors"][:2]))
+        ok("type is measured", report["facts"].get("smallest_pt", 0) > 0,
+           f"{report['facts'].get('smallest_pt', 0):.1f} pt floor")
 
-        sheet_path = sheet_mod.build_sheet(spec, designs, folder / "out" / "designs.jpg")
-        ok("contact sheet written", sheet_path.exists() and sheet_path.stat().st_size > 20_000)
+        manifest = export_mod.export(spec, spec.front_design(), dpi=150,
+                                     back=True, back_design=spec.back_design())
+        pdf = spec.folder / "out" / "selftest.pdf"
+        ok("PDF is two pages", pdf.exists() and pdf.stat().st_size > 1000)
+        problems = deck_mod.verify_files(pdf, 2, (5 + 2 * config.BLEED_IN, 7 + 2 * config.BLEED_IN))
+        ok("PDF page size is trim + bleed", not problems, "; ".join(problems))
 
-        for style_key in config.STYLES:
-            spec.design["style"] = style_key
-            style_designs = layouts.build(spec, photos)
-            if not style_designs or len(style_designs[0].slots) != len(photos):
-                failures.append(f"style {style_key} could not place every photograph")
-        ok("all eight styles place every photograph", not any("style " in f for f in failures))
-        spec.design["style"] = "classic"
-        spec.save()
+        sheet_path = sheet.build_sheet(spec, out=spec.folder / "out" / "designs.jpg")
+        ok("contact sheet written", sheet_path.exists())
+        seen = see.write(spec, width=900)
+        ok("annotated preview written", (seen / "front.png").exists() and (seen / "photos.jpg").exists())
+        ok("visual report written", (seen / "visual.md").exists())
 
-        manifest = export_mod.export(spec, designs[0], fmt="pdf", dpi=300)
-        problems = export_mod.verify_files(spec, manifest)
-        ok("PDF page size and page count verified", not problems, "; ".join(problems))
-        pages = manifest["files"][0].get("pages", [])
-        ok("PDF is two pages (front and back)", len(pages) == 2, str(len(pages)))
-        ok("PDF page is trim + bleed", abs(pages[0]["w_in"] - 5.25) < 0.01 and abs(pages[0]["h_in"] - 7.25) < 0.01,
-           f"{pages[0]['w_in']}x{pages[0]['h_in']}")
+        det = faces.status()
+        ok("face engine reports honestly", det["detector"] in ("YuNet", "Haar", "none"),
+           det["detector"])
+        if det["detector"] != "none":
+            stats = compose.load_photo_stats(spec)
+            ok("face scan ran on every photograph", len(stats) == 3)
 
-        png = export_mod.export(spec, designs[0], fmt="png", dpi=150, back=False)
-        item = png["files"][0]
-        expected = list(export_mod.render.canvas_px(spec, 150, True)[:2])
-        ok("PNG is exactly trim + bleed at 150 DPI", item["px"] == expected, f"{item['px']} vs {expected}")
-        ok("PNG DPI metadata", export_mod.verify_files(spec, png) == [])
+        deck_folder = root / "deck"
+        deck_folder.mkdir()
+        deck_photos = []
+        for path in demo[:3]:
+            dest = deck_folder / path.name
+            shutil.copy2(path, dest)
+            deck_photos.append(dest.name)
+        dspec = deck_mod.DeckSpec.create(deck_folder, "selftest-deck", deck_photos,
+                                         direction="editorial")
+        dspec.text.update({"title": "The Test Family", "subtitle": "2026 in photographs",
+                           "greeting": "Merry Christmas", "message": "A quieter year, mostly at home.",
+                           "signature": "with love, Anna and Tom", "year": "2026"})
+        dspec.save()
+        dissues, count = deck_mod.install(dspec, {"slides": SLIDES})
+        derrors = [i for i in dissues if i.level == "error"]
+        ok("slides pass the rulebook", not derrors, "; ".join(i.message for i in derrors[:2]))
+        dreport = deck_mod.check(dspec, dpi=150)
+        ok("deck gate is clean", not dreport["errors"], "; ".join(dreport["errors"][:2]))
+        deck_mod.export(dspec, dpi=150, png=True)
+        dpdf = deck_folder / "out" / "selftest-deck.pdf"
+        dprobs = deck_mod.verify_files(dpdf, 3, (40 / 3, 7.5))
+        ok("deck PDF is three 16:9 pages", not dprobs, "; ".join(dprobs))
+        ok("slide PNGs written", len(list((deck_folder / "out" / "slides").glob("*.png"))) == 3)
 
-        german = "Fröhliche Weihnachten"
-        spec.text["greeting"] = german
-        spec.save()
-        report = gate.check(spec, designs[0])
-        ok("accented characters survive the gate", not report["errors"], "; ".join(report["errors"]))
-        spec.text["greeting"] = "Merry Christmas"
-        spec.save()
-
-        elapsed = time.time() - started
-        print("\n".join(checks))
-        print(f"  ---- {len(failures)} failure(s), {plan_seconds:.2f}s to plan six designs, {elapsed:.1f}s total")
-        if failures:
-            print("\nFAIL:")
-            for failure in failures:
-                print(f"  - {failure}")
-            return 1
-        print("\nselftest: PASS")
-        return 0
-    finally:
-        if keep:
-            print(f"\nkept the test card at {tmp}")
-        else:
-            shutil.rmtree(tmp, ignore_errors=True)
+    print(f"\nselftest: {'PASS' if failures == 0 else 'FAIL'} ({failures} failure(s))")
+    return 0 if failures == 0 else 1

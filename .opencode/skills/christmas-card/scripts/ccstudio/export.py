@@ -21,7 +21,8 @@ class ExportError(RuntimeError):
 
 def export(spec: CardSpec, design, fmt: str | None = None, dpi: int | None = None,
            bleed: bool | None = None, crop_marks: bool | None = None, back: bool | None = None,
-           quality: int | None = None, draft: bool = False, out_dir: Path | None = None) -> dict[str, Any]:
+           quality: int | None = None, draft: bool = False, out_dir: Path | None = None,
+           back_design=None) -> dict[str, Any]:
     fmt = (fmt or spec.export.get("format") or "pdf").lower()
     if fmt == "jpg":
         fmt = "jpeg"
@@ -42,8 +43,8 @@ def export(spec: CardSpec, design, fmt: str | None = None, dpi: int | None = Non
 
     front = render.render_front(spec, design, dpi, bleed=bleed)
     pages = [("front", front)]
-    if back:
-        pages.append(("back", render.render_back(spec, dpi, bleed=bleed)))
+    if back and back_design is not None:
+        pages.append(("back", render.render_front(spec, back_design, dpi, bleed=bleed, page="back")))
 
     written: list[dict[str, Any]] = []
     if fmt == "pdf":
@@ -71,7 +72,7 @@ def export(spec: CardSpec, design, fmt: str | None = None, dpi: int | None = Non
         "name": spec.name,
         "generated_with": "ccb",
         "design": design.label if hasattr(design, "label") else str(design.get("label")),
-        "engine": design.engine if hasattr(design, "engine") else str(design.get("engine")),
+        "engine": "composition",
         "dpi": dpi,
         "bleed_in": config.BLEED_IN if bleed else 0.0,
         "crop_marks": bool(crop_marks and bleed),

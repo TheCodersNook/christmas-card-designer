@@ -1,30 +1,29 @@
 ---
-description: Make a 16:9 Christmas presentation from photographs in this project
+description: Make a 16:9 Christmas presentation from photographs, designed against the rulebook
 ---
 
-Make a Christmas presentation from the photographs in this message (or from
-`inputs/`). A presentation is not a card: it is 16:9, made to be looked at on a
-screen or projected, with no bleed and no crop marks.
+Make a 16:9 presentation from the photographs in this message (or `inputs/`).
 
-Follow the "Presentations" workflow in AGENTS.md exactly, using only `./ccb`
-commands:
+1. `./ccb deck new <each path> --name <family-year> --direction <editorial|...>`
+   with `--title`, `--subtitle`, `--greeting`, `--message`, `--signature`,
+   `--year`. Use their exact wording.
+2. `./ccb deck brief decks/<name>` and read it, plus `studio/RULES.md`.
+3. `./ccb deck see decks/<name>`; open `out/see/photos.jpg` if your model can
+   read images, otherwise read `visual.md` and say so.
+4. Write `slides.json`: `{"slides": [ ... ]}`. Every slide is a composition —
+   there are no slide kinds. A good rhythm is cover, one photograph per slide,
+   a statement, a gallery for the rest, a closing, with every photograph used
+   once and no more than six in a gallery. Captions and page numbers go in a
+   zone's `text` field.
+5. `./ccb deck layout decks/<name> --file slides.json`. Fix every error and
+   retry; read the warnings.
+6. `./ccb deck check decks/<name>` until 0 errors.
+7. `./ccb deck see decks/<name>` and look at the annotated slides. If you cannot
+   see them, say so.
+8. `./ccb deck render decks/<name> --png`, then `./ccb deck qa decks/<name>`
+   (must PASS).
+9. Report the PDF path, the slide count, the size (13.333 x 7.5 in), the DPI and
+   the QA result. It is a PDF + PNGs, never a `.pptx`.
 
-1. `./ccb add "<each path as given>"` for every photograph that is not already in
-   `inputs/`.
-2. `./ccb deck new inputs/<files> --name <family-year>` with any words they gave
-   in the same message (`--title`, `--subtitle`, `--greeting`, `--message`,
-   `--signature`, `--year`, `--style`, `--palette`, `--hero`).
-3. Read `decks/<name>/report.md` completely.
-4. Set the words with `./ccb deck text` using their exact wording and spelling.
-   Never invent a name, a year, a greeting or a caption. Ask for anything
-   missing.
-5. `./ccb deck check decks/<name>` until it shows 0 errors. Fix each warning or
-   explain why not.
-6. `./ccb deck sheet decks/<name>` and ask them to look at `out/slides.jpg`.
-7. `./ccb deck render decks/<name>` and `./ccb deck qa decks/<name>` (must say
-   PASS). Add `--png` when they want one image per slide for Keynote, PowerPoint
-   or Google Slides.
-
-Never modify their photographs. Never claim you looked at the slides. Report the
-output path, the slide count, the page size, the DPI, the QA result and anything
-still open.
+Never modify their photographs. Never claim to have looked at an image you did
+not open.

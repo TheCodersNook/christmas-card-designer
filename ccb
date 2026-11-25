@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ccb: the Christmas card engine from this project.
-#   ./ccb doctor | samples | add <photos> | new <photos> --name x | auto | check | sheet | render | qa | status
-#   ./ccb make <photos...>            the whole card in one command
-#   ./ccb deck new|plan|check|sheet|render|qa <deck>
-#   ./ccb deck make <photos...>       the whole 16:9 presentation in one command
+#   ./ccb doctor | samples | new <photos> --name x | brief | layout | check | see | render | qa
+#   ./ccb faces                       install the YuNet face model and scan photographs
+#   ./ccb deck new|brief|layout|check|see|render|qa <deck>
+#   ./ccb make <photos...>            start a card: copy, brief, photo sheet (no template)
 # The engine lives inside the skill; this script makes sure it runs with the
 # project's Python and the project folder as its home.
 set -euo pipefail

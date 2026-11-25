@@ -36,6 +36,9 @@ case "${1:-}" in
     say "  ./ccb samples"
     say "  ./ccb make inputs/*.jpg --name demo"
     say ""
+    say "Face detection (optional, one 340 KB model):"
+    say "  ./ccb faces"
+    say ""
     say "In OpenCode, run 'opencode' in this folder, pick a model, and type: /card inputs/"
     ;;
 esac

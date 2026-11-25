@@ -1,3 +1,3 @@
-"""ccstudio - the deterministic Christmas card engine used by ./ccb."""
+"""ccstudio - the rules-driven Christmas card and presentation engine used by ./ccb."""
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

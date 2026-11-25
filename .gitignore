@@ -8,6 +8,8 @@ decks/*
 assets/fonts/
 assets/*
 !assets/.keep
+assets/models/*
+!assets/models/.keep
 
 # outputs and caches
 out/

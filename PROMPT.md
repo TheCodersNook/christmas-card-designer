@@ -1,83 +1,44 @@
-# What to type in OpenCode
+# Prompt for a model outside OpenCode
 
-## 1. Open the project
+Paste this into any agent that can run shell commands in this folder.
 
-Terminal:
+---
 
-```bash
-cd path/to/christmas-card-studio
-opencode
+You are working in the Christmas Card Studio. It makes print-ready Christmas
+cards and 16:9 presentations from a family's own photographs.
+
+There are **no templates**. Read `studio/RULES.md` and run `./ccb brief` before
+you design. Then write compositions — photograph slots, text zones, ornaments and
+rules as fractions of the page — and let the engine validate them.
+
+Rules you must not break:
+
+1. Run only `./ccb ...`; never call the engine's Python directly.
+2. Never modify a photograph. Never invent names, dates or family details.
+3. Text never overlaps a photograph; slots and zones never overlap.
+4. If the gate reports an error, fix the composition. Do not raise a limit.
+5. Output is a PDF (plus PNGs). Never call it a `.pptx`.
+6. You may only say you saw an image if your model can read images and you
+   actually opened `out/see/photos.jpg` or `out/see/front.png`. Otherwise read
+   `out/see/visual.md` and say you are working from measurements.
+
+The loop:
+
+```
+./ccb new <photos...> --name <name> --direction <direction> [words...]
+./ccb brief cards/<name>
+./ccb see cards/<name>              # photos.jpg, or visual.md
+# write design.json: 2-3 fronts + a back
+./ccb layout cards/<name> --file design.json
+./ccb check cards/<name>            # must be 0 errors
+./ccb see cards/<name>              # look at front.png
+./ccb render cards/<name>
+./ccb qa cards/<name>               # must PASS
 ```
 
-OpenCode desktop app: open the christmas-card-studio folder as the project.
+For a presentation use `./ccb deck new|brief|layout|check|see|render|qa` and a
+`slides.json` with `{"slides": [...]}`. Every slide is a composition; there are
+no slide kinds.
 
-Pick a cloud-hosted model with `/models`; the free hosted ones need no login.
-This project does not use a local model: the layout engine is deterministic
-Python, and no image leaves the computer.
-
-## 2. Give it your photographs
-
-Either put them in `inputs/` (drag them into the folder), or drag them straight
-into the OpenCode chat, type `@` and pick them, or paste their paths. It copies
-them into `inputs/` itself; your originals are never touched. OpenCode may ask
-once for permission to read a folder outside the project (Downloads, Photos):
-allow it.
-
-## 3. Type one line
-
-```text
-/card inputs/family_tree.jpg inputs/couple_snow.jpg inputs/cabin.jpg
-```
-
-For a 16:9 presentation from the same photographs:
-
-```text
-/presentation inputs/family_tree.jpg inputs/couple_snow.jpg inputs/cabin.jpg
-```
-
-With the words in the same line:
-
-```text
-/presentation inputs/*.jpg --title "The Hayes Family" --subtitle "2026 in photographs" --greeting "Merry Christmas"
-```
-
-```text
-/card inputs/*.jpg --family "The Hayes Family" --greeting "Merry Christmas" --size 5x7
-```
-
-Instead of listing files you can drag them in right after `/card ` or
-`/presentation `.
-
-If the slash commands do not show up, paste this instead:
-
-```text
-Make our Christmas card from these photographs: <list or paths>.
-Load the christmas-card skill (.opencode/skills/christmas-card/SKILL.md), read
-AGENTS.md, and follow "The workflow" steps 0 to 7 exactly. Use only ./ccb
-commands. Get the words right, never invent them, keep our photographs untouched,
-and stop at the gate if it has errors. When done, tell me the file path, the
-physical size and DPI, and what is still open.
-```
-
-## 4. Look at it, then give feedback
-
-The contact sheet with all six designs is at
-`cards/<name>/out/designs.jpg`; the card itself is `cards/<name>/out/<name>.pdf`.
-Print it, or send it to a printer, at 100% - never "fit to page".
-
-```text
-/fix use design 2, make the message shorter, and try the midnight palette
-```
-
-```text
-/fix the 2024 photograph is blurry - use the cabin one instead
-```
-
-```text
-/fix caption the cabin photograph "first snow" and make the slides midnight
-```
-
-`/fix` works on a card or a presentation: it looks at what is in the project and
-the note decides which. `/status` lists every card and presentation with its
-files. A presentation's slides are at `decks/<name>/out/slides.jpg`; the file to
-show is `decks/<name>/out/<name>.pdf`.
+When you finish, report: the folder, the physical size, the DPI, the QA result,
+the compositions you chose and why, and anything still open.

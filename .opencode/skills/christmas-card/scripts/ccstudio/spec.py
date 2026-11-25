@@ -1,7 +1,8 @@
-"""cards/<name>/card.json: the one file a designer edits.
+"""cards/<name>/card.json: photographs, words, direction and free compositions.
 
-It holds the photographs, the words, the print settings and the generated
-designs. Everything else in the folder is an output.
+There is no layout setting any more. A card holds one or more compositions the
+agent wrote against the rulebook; ``front`` and ``back`` are just compositions
+with a side. ``selected`` picks which front is rendered.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import config, layouts
 
 
 DEFAULT_TEXT = {
@@ -21,14 +22,12 @@ DEFAULT_TEXT = {
 }
 
 DEFAULT_DESIGN = {
-    "style": "classic",
-    "palette": "",          # empty = the style's own palette
+    "direction": "classic",   # a direction is guidance from the rulebook, not a template
+    "palette": "",            # empty = the direction's palette
     "size": "5x7",
     "orientation": "portrait",
-    "layout": "auto",       # auto | one of config.ENGINES
-    "hero": "",             # file name of the photo to feature
-    "order": [],            # photo file names, front of the list first
-    "variants": 6,
+    "compositions": [],
+    "selected": 0,
 }
 
 DEFAULT_EXPORT = {
@@ -59,7 +58,7 @@ class CardSpec:
         if p.is_dir():
             p = p / "card.json"
         if not p.exists():
-            raise SpecError(f"no card.json at {p} (run ./ccb new <photos...> first)")
+            raise SpecError(f"no card.json at {p} (run ./ccb add <photos...> first)")
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -76,9 +75,6 @@ class CardSpec:
             "text": dict(DEFAULT_TEXT),
             "design": {**DEFAULT_DESIGN, **{k: v for k, v in design.items() if v not in (None, "")}},
             "export": dict(DEFAULT_EXPORT),
-            "designs": [],
-            "selected": 0,
-            "notes": [],
         }
         folder.mkdir(parents=True, exist_ok=True)
         spec = cls(folder / "card.json", normalise(data, folder / "card.json"))
@@ -100,22 +96,50 @@ class CardSpec:
 
     @property
     def design(self) -> dict[str, Any]:
-        return self.data.setdefault("design", dict(DEFAULT_DESIGN))
+        if not isinstance(self.data.get("design"), dict):
+            self.data["design"] = dict(DEFAULT_DESIGN)
+        return self.data["design"]
 
     @property
     def export(self) -> dict[str, Any]:
-        return self.data.setdefault("export", dict(DEFAULT_EXPORT))
+        if not isinstance(self.data.get("export"), dict):
+            self.data["export"] = dict(DEFAULT_EXPORT)
+        return self.data["export"]
 
     @property
-    def designs(self) -> list[dict[str, Any]]:
-        return self.data.setdefault("designs", [])
+    def compositions(self) -> list[dict[str, Any]]:
+        return self.design.setdefault("compositions", [])
 
     @property
     def selected(self) -> int:
         try:
-            return max(0, int(self.data.get("selected", 0)))
+            return max(0, int(self.design.get("selected", 0)))
         except (TypeError, ValueError):
             return 0
+
+    @property
+    def front_compositions(self) -> list[dict[str, Any]]:
+        return [c for c in self.compositions if str(c.get("side", "front")) == "front"]
+
+    def front(self) -> dict[str, Any] | None:
+        fronts = self.front_compositions
+        if not fronts:
+            return None
+        return fronts[max(0, min(len(fronts) - 1, self.selected))]
+
+    def back(self) -> dict[str, Any] | None:
+        for comp in self.compositions:
+            if str(comp.get("side", "front")) == "back":
+                return comp
+        return None
+
+    def front_design(self) -> layouts.Design | None:
+        comp = self.front()
+        return _design(comp) if comp else None
+
+    def back_design(self) -> layouts.Design | None:
+        comp = self.back()
+        return _design(comp) if comp else None
 
     @property
     def photo_paths(self) -> list[Path]:
@@ -128,12 +152,11 @@ class CardSpec:
         photos = self.photo_paths
         if isinstance(slot_photo, int):
             return photos[max(0, min(len(photos) - 1, slot_photo))]
-        p = resolve(self.folder, slot_photo)
-        return p
+        return resolve(self.folder, slot_photo)
 
     @property
     def style(self) -> config.Style:
-        return config.style(self.design.get("style"))
+        return config.style(self.design.get("direction") or self.design.get("style"))
 
     @property
     def palette(self) -> config.Palette:
@@ -146,14 +169,15 @@ class CardSpec:
             w, h = h, w
         return w, h
 
-    def current_design(self) -> dict[str, Any] | None:
-        if not self.designs:
-            return None
-        return self.designs[max(0, min(len(self.designs) - 1, self.selected))]
-
     # ------------------------------------------------------------------ write
     def save(self) -> None:
         self.path.write_text(json.dumps(self.data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _design(comp: dict[str, Any]) -> layouts.Design:
+    design = layouts.Design.from_dict(comp)
+    design.label = str(comp.get("name") or design.label)
+    return design
 
 
 def normalise(data: dict[str, Any], path: Path) -> dict[str, Any]:
@@ -164,8 +188,30 @@ def normalise(data: dict[str, Any], path: Path) -> dict[str, Any]:
     data["photos"] = [str(p) for p in photos]
     text = data.get("text") if isinstance(data.get("text"), dict) else {}
     data["text"] = {**DEFAULT_TEXT, **{k: _s(v) for k, v in text.items() if k in DEFAULT_TEXT}}
+
     design = data.get("design") if isinstance(data.get("design"), dict) else {}
-    data["design"] = {**DEFAULT_DESIGN, **design}
+    design = {**DEFAULT_DESIGN, **design}
+    # migrate a v1 card: style -> direction, top-level designs -> compositions
+    if "style" in design and not design.get("direction"):
+        design["direction"] = design.pop("style")
+    if isinstance(data.get("designs"), list) and not design.get("compositions"):
+        migrated = []
+        for i, old in enumerate(data["designs"]):
+            if not isinstance(old, dict):
+                continue
+            comp = {**old, "name": old.get("label") or f"Composition {i + 1}", "side": "front"}
+            comp.pop("engine", None)
+            migrated.append(comp)
+        design["compositions"] = migrated
+    data.pop("designs", None)
+    data["design"] = design
+    if not isinstance(design.get("compositions"), list):
+        design["compositions"] = []
+    try:
+        design["selected"] = max(0, int(design.get("selected", 0)))
+    except (TypeError, ValueError):
+        design["selected"] = 0
+
     export = data.get("export") if isinstance(data.get("export"), dict) else {}
     export = {**DEFAULT_EXPORT, **export}
     try:
@@ -176,9 +222,6 @@ def normalise(data: dict[str, Any], path: Path) -> dict[str, Any]:
     if export["format"] not in ("pdf", "png", "jpeg", "jpg"):
         export["format"] = "pdf"
     data["export"] = export
-    if not isinstance(data.get("designs"), list):
-        data["designs"] = []
-    data.setdefault("selected", 0)
     return data
 
 
@@ -187,7 +230,7 @@ def _s(v: Any) -> str:
 
 
 def resolve(folder: Path, item: str | Path) -> Path:
-    """Photo paths are stored relative to the project folder, but absolute ones work too."""
+    """Photo paths are stored relative to the card folder, but absolute ones work too."""
     p = Path(str(item)).expanduser()
     if p.is_absolute():
         return p

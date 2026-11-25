@@ -1,15 +1,17 @@
-"""Paper, palettes and the eight card styles.
+"""The studio rulebook, loaded from studio/rules.json.
 
-Every number here is physical: sizes are inches, margins are a fraction of the
-card's short side, type sizes are a fraction of the short side at export
-resolution. That is why a 5x7 and a 5x5 card look like the same designer made
-them.
+Nothing about paper, palette, type or a direction is hardcoded here any more.
+The JSON file is the source of truth: edit it (and studio/RULES.md explains every
+field), restart the command, and the whole engine follows. `config` only turns
+that file into small immutable objects the renderer can use.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 def project_root() -> Path:
@@ -20,33 +22,64 @@ def project_root() -> Path:
 
 ROOT = project_root()
 FONT_DIR = ROOT / "assets" / "fonts"
+MODEL_DIR = ROOT / "assets" / "models"
 SKILL_DIR = Path(__file__).resolve().parents[2]   # .opencode/skills/christmas-card
 CARDS_DIR = ROOT / "cards"
 DECKS_DIR = ROOT / "decks"
+RULES_PATH = ROOT / "studio" / "rules.json"
+SEE_DIRNAME = "see"
 
-BLEED_IN = 0.125
-MIN_DPI, MAX_DPI = 96, 1200
 
-# Trim sizes in inches, portrait. Landscape swaps them.
+class RulesError(RuntimeError):
+    pass
+
+
+def _read_rules(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise RulesError(
+            f"the rulebook is missing at {path}\n"
+            "It ships in studio/rules.json; restore it or point CCSTUDIO_HOME at the project."
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RulesError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict) or "paper" not in data or "directions" not in data:
+        raise RulesError(f"{path} must contain 'paper', 'composition', 'type', 'palettes' and 'directions'")
+    return data
+
+
+RULES = _read_rules(RULES_PATH)
+
+BLEED_IN = float(RULES["paper"].get("bleed_in", 0.125))
+MIN_DPI = int(RULES["paper"].get("min_dpi", 96))
+MAX_DPI = int(RULES["paper"].get("max_dpi", 1200))
 SIZES: dict[str, tuple[float, float]] = {
-    "5x7": (5.0, 7.0),
-    "4x6": (4.0, 6.0),
-    "5x5": (5.0, 5.0),
-    "a6": (4.13, 5.83),
-    "a2": (4.25, 5.5),      # A2 invitation
+    str(key): (float(value[0]), float(value[1]))
+    for key, value in RULES["paper"].get("sizes", {}).items()
 }
+if not SIZES:
+    SIZES = {"5x7": (5.0, 7.0)}
+
+COMPOSE = RULES.get("composition", {})
+TYPE = RULES.get("type", {})
+ROLE_RULES: dict[str, dict[str, Any]] = TYPE.get("roles", {})
+ROLE_SIZES = {role: float(spec.get("scale", 0.03)) for role, spec in ROLE_RULES.items()}
+TEXT_ROLES = ("greeting", "family", "message", "signature", "year")
+DECK_TEXT_ROLES = ("title", "subtitle", "greeting", "message", "signature", "year")
+CANVAS_16X9 = (40 / 3, 7.5)
 
 
 @dataclass(frozen=True)
 class Palette:
     key: str
     label: str
-    bg: str          # card background
-    ink: str         # primary text
-    soft: str        # secondary text
-    accent: str      # decoration / rules
-    panel: str       # text panel or photo frame colour
-    on_panel: str    # text on the panel
+    bg: str
+    ink: str
+    soft: str
+    accent: str
+    panel: str
+    on_panel: str
 
     def colors(self) -> dict[str, str]:
         return {
@@ -54,17 +87,15 @@ class Palette:
             "accent": self.accent, "panel": self.panel, "on_panel": self.on_panel,
         }
 
+    def token(self, name: str) -> str:
+        return getattr(self, name, self.ink)
+
 
 PALETTES: dict[str, Palette] = {
-    p.key: p
-    for p in (
-        Palette("evergreen", "Evergreen", "#F6F1E4", "#1E3A2B", "#4C6152", "#9C1B23", "#1E3A2B", "#F6F1E4"),
-        Palette("cranberry", "Cranberry", "#FBF4EF", "#4A1D24", "#7C5257", "#A62B33", "#4A1D24", "#FBF4EF"),
-        Palette("midnight", "Midnight", "#0E1B2A", "#EAF0F6", "#AFC0D0", "#C9A227", "#16273A", "#EAF0F6"),
-        Palette("nordic", "Nordic", "#EEF1F0", "#25322F", "#5C6D68", "#7E9B91", "#25322F", "#EEF1F0"),
-        Palette("brass", "Brass", "#F7F3EC", "#2B2A26", "#6B665C", "#B08D4F", "#2B2A26", "#F7F3EC"),
-        Palette("peppermint", "Peppermint", "#FAF7F2", "#22313A", "#5B6E78", "#C0392B", "#22313A", "#FAF7F2"),
-    )
+    str(key): Palette(str(key), str(value.get("label", key)), str(value["bg"]), str(value["ink"]),
+                      str(value["soft"]), str(value["accent"]), str(value["panel"]),
+                      str(value["on_panel"]))
+    for key, value in RULES.get("palettes", {}).items()
 }
 
 
@@ -74,82 +105,80 @@ class Style:
     label: str
     blurb: str
     palette: str
-    heading: str          # font family key
+    heading: str
     body: str
     script: str
-    greeting_font: str    # heading | body | script
-    name_font: str        # heading | body | script
-    caps: bool            # headings in capitals
+    greeting_font: str
+    name_font: str
+    caps: bool
     weight: int
-    tracking: float       # em
-    align: str            # center | left
-    margin: float         # fraction of the short side
-    decoration: str       # holly | snow | stars | confetti | none
+    tracking: float
+    align: str
+    margin: float
+    decoration: str
     density: float
-    border: str           # double | frame | rule | postcard | none
-    photo_frame: str      # border | shadow | tilt | plain
-    radius: float         # photo corner radius, fraction of the short side
+    border: str
+    photo_frame: str
+    radius: float
     texture: bool
+    guidance: str = ""
 
 
 STYLES: dict[str, Style] = {
-    s.key: s
-    for s in (
-        Style("classic", "Classic Christmas", "Cream stock, deep green and holly; the card most families picture.",
-              "evergreen", "playfair", "lato", "greatvibes", "heading", "heading",
-              False, 700, 0.02, "center", 0.07, "holly", 0.5, "double", "border", 0.0, True),
-        Style("modern", "Modern Minimalist", "Lots of air, one small rule, tiny stars and left-aligned type.",
-              "nordic", "montserrat", "lato", "greatvibes", "heading", "body",
-              True, 500, 0.18, "left", 0.085, "stars", 0.18, "rule", "plain", 0.012, False),
-        Style("traditional", "Traditional Holiday", "Deep cranberry, capitals, snow falling behind a framed grid.",
-              "cranberry", "cormorant", "lato", "greatvibes", "heading", "script",
-              True, 700, 0.12, "center", 0.065, "snow", 0.7, "frame", "border", 0.0, True),
-        Style("editorial", "Luxury Editorial", "A magazine spread: wide margins, brass rules, photographs as plates.",
-              "brass", "playfair", "lato", "greatvibes", "heading", "body",
-              True, 500, 0.14, "left", 0.085, "none", 0.0, "rule", "plain", 0.0, False),
-        Style("nordic", "Scandinavian", "Pale grey-green, small photographs, a scatter of quiet stars.",
-              "nordic", "montserrat", "cormorant", "greatvibes", "heading", "body",
-              True, 500, 0.22, "center", 0.075, "stars", 0.4, "none", "plain", 0.008, False),
-        Style("vintage", "Vintage Christmas", "Warm paper, a postcard border, tilted frames and holly sprigs.",
-              "cranberry", "cormorant", "lato", "greatvibes", "heading", "script",
-              False, 600, 0.06, "center", 0.07, "holly", 0.45, "postcard", "tilt", 0.004, True),
-        Style("joyful", "Playful Festive", "Bright red, script lettering, confetti and shadowed snapshots.",
-              "peppermint", "playfair", "lato", "greatvibes", "script", "body",
-              False, 700, 0.0, "center", 0.07, "confetti", 0.8, "none", "shadow", 0.02, False),
-        Style("gallery", "Photo-First", "Nearly all photographs, a thin rule and a small line of type.",
-              "evergreen", "lato", "lato", "greatvibes", "heading", "heading",
-              True, 700, 0.24, "center", 0.05, "none", 0.0, "rule", "shadow", 0.006, False),
+    str(key): Style(
+        key=str(key),
+        label=str(value.get("label", key)),
+        blurb=str(value.get("blurb", "")),
+        palette=str(value.get("palette", "evergreen")),
+        heading=str(value.get("heading", "playfair")),
+        body=str(value.get("body", "lato")),
+        script=str(value.get("script", "greatvibes")),
+        greeting_font=str(value.get("greeting_font", "heading")),
+        name_font=str(value.get("name_font", "heading")),
+        caps=bool(value.get("caps", False)),
+        weight=int(value.get("weight", 500)),
+        tracking=float(value.get("tracking", 0.0)),
+        align=str(value.get("align", "center")),
+        margin=float(value.get("margin", 0.07)),
+        decoration=str(value.get("decoration", "none")),
+        density=float(value.get("density", 0.0)),
+        border=str(value.get("border", "none")),
+        photo_frame=str(value.get("photo_frame", "plain")),
+        radius=float(value.get("radius", 0.0)),
+        texture=bool(value.get("texture", False)),
+        guidance=str(value.get("guidance", "")),
     )
+    for key, value in RULES.get("directions", {}).items()
 }
-
-ENGINES = ("grid", "hero", "mosaic", "editorial", "postcard", "banner")
-
-ENGINE_LABELS = {
-    "grid": "Uniform grid",
-    "hero": "Hero and strip",
-    "mosaic": "Proportional mosaic",
-    "editorial": "Editorial column",
-    "postcard": "Postcard stack",
-    "banner": "Panorama banner",
-}
-
-TEXT_ROLES = ("greeting", "family", "message", "signature", "year")
+if not STYLES:
+    raise RulesError("studio/rules.json has no directions")
+DIRECTIONS = STYLES
 
 
 def style(key: str | None) -> Style:
-    return STYLES.get((key or "classic").lower(), STYLES["classic"])
+    if key and str(key).lower() in STYLES:
+        return STYLES[str(key).lower()]
+    return next(iter(STYLES.values()))
 
 
 def palette(style_or_key: Style | str | None) -> Palette:
     key = style_or_key.palette if isinstance(style_or_key, Style) else (style_or_key or "evergreen")
-    return PALETTES.get(str(key).lower(), PALETTES["evergreen"])
+    return PALETTES.get(str(key).lower(), next(iter(PALETTES.values())))
 
 
 def size(key: str | None) -> tuple[float, float]:
-    return SIZES.get((key or "5x7").lower(), SIZES["5x7"])
+    return SIZES.get((key or "5x7").lower(), next(iter(SIZES.values())))
 
 
 def size_label(key: str, landscape: bool = False) -> str:
     w, h = size(key)
     w, h = (h, w) if landscape else (w, h)
     return f"{w:g} x {h:g} in"
+
+
+def role_rules(role: str) -> dict[str, Any]:
+    return ROLE_RULES.get(role, {"scale": 0.03, "max_lines": 4, "spacing": 1.4})
+
+
+def limit(section: str, key: str, default: Any) -> Any:
+    return COMPOSE.get(section, {}).get(key, default)
