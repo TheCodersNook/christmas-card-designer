@@ -12,6 +12,9 @@
   ./ccb sheet <card.json>             contact sheet of every design
   ./ccb render <card.json>            write the print files (PDF, PNG or JPEG)
   ./ccb qa <card.json>                read the exported files back and verify them
+  ./ccb deck new <photo>... --name x  start a 16:9 presentation from the photographs
+  ./ccb deck check|sheet|render|qa    the presentation gate, contact sheet, PDF, QA
+  ./ccb deck make <photo>...          the whole presentation in one command
   ./ccb status | styles | sizes       what exists, what it can do
   ./ccb selftest                      end-to-end check with generated photographs
 """
@@ -25,6 +28,7 @@ import sys
 from pathlib import Path
 
 from . import auto, check as gate, config, export as export_mod, fonts, layouts, samples
+from . import deck as deck_mod
 from . import sheet as sheet_mod
 from .photos import PhotoError, load
 from .spec import CardSpec, SpecError, safe_name, unique_card_dir
@@ -46,6 +50,19 @@ def _card_arg(arg: str | None) -> CardSpec:
         names = ", ".join(p.parent.name for p in found)
         raise SpecError(f"more than one card ({names}); name one, for example ./ccb check cards/{found[0].parent.name}")
     return CardSpec.load(found[0])
+
+
+def _deck_arg(arg: str | None):
+    if arg:
+        return deck_mod.DeckSpec.load(arg)
+    found = sorted(config.DECKS_DIR.glob("*/deck.json")) if config.DECKS_DIR.exists() else []
+    if not found:
+        raise deck_mod.DeckError("no presentations yet - start one with ./ccb deck new <photographs>")
+    if len(found) > 1:
+        names = ", ".join(p.parent.name for p in found)
+        raise deck_mod.DeckError(f"more than one presentation ({names}); name one, for example "
+                                 f"./ccb deck check decks/{found[0].parent.name}")
+    return deck_mod.DeckSpec.load(found[0])
 
 
 def _copy_into_inputs(src: Path) -> Path:
@@ -71,6 +88,13 @@ def _copy_into_inputs(src: Path) -> Path:
 
 def _apply_text(spec: CardSpec, a) -> None:
     for role in config.TEXT_ROLES:
+        value = getattr(a, role, None)
+        if value is not None:
+            spec.text[role] = str(value).strip()
+
+
+def _apply_deck_text(spec, a) -> None:
+    for role in deck_mod.DECK_TEXT:
         value = getattr(a, role, None)
         if value is not None:
             spec.text[role] = str(value).strip()
@@ -134,7 +158,8 @@ def cmd_doctor(a) -> int:
             print(f"  MISSING     {label} - run ./setup.sh")
     print(f"  fonts       {fonts.status()}")
     cards = sorted(config.CARDS_DIR.glob("*/card.json")) if config.CARDS_DIR.exists() else []
-    print(f"  cards       {len(cards)} in cards/")
+    decks = sorted(config.DECKS_DIR.glob("*/deck.json")) if config.DECKS_DIR.exists() else []
+    print(f"  cards       {len(cards)} in cards/, {len(decks)} presentation(s) in decks/")
     print(f"  project     {config.ROOT}")
     if not ok:
         print("\nInstall the missing Python packages with ./setup.sh (or pip install -r requirements.txt).")
@@ -350,7 +375,10 @@ def cmd_status(a) -> int:
     found = sorted(config.CARDS_DIR.glob("*/card.json")) if config.CARDS_DIR.exists() else []
     if not found:
         print("No cards yet. Start one with ./ccb new <photographs> --name <name>")
-        return 0
+    return _status_cards(found) + _status_decks()
+
+
+def _status_cards(found: list[Path]) -> int:
     for path in found:
         try:
             spec = CardSpec.load(path)
@@ -363,6 +391,26 @@ def cmd_status(a) -> int:
         print(f"{spec.name}")
         print(f"  {len(spec.photo_paths)} photographs, {spec.style.label}, "
               f"{spec.card_inches[0]:g}x{spec.card_inches[1]:g} in, {label}")
+        print(f"  files: {', '.join(outs) if outs else 'not rendered yet'}")
+    return 0
+
+
+def _status_decks() -> int:
+    found = sorted(config.DECKS_DIR.glob("*/deck.json")) if config.DECKS_DIR.exists() else []
+    if not found:
+        print("No presentations yet. Start one with ./ccb deck new <photographs> --name <name>")
+        return 0
+    print("\nPresentations:")
+    for path in found:
+        try:
+            spec = deck_mod.DeckSpec.load(path)
+        except deck_mod.DeckError as exc:
+            print(f"{path.parent.name}: broken ({exc})")
+            continue
+        outs = sorted(p.name for p in (spec.folder / "out").glob("*")) if (spec.folder / "out").exists() else []
+        print(f"{spec.name}")
+        print(f"  {len(spec.photo_paths)} photographs, {spec.style.label} / {spec.palette.label}, "
+              f"{len(spec.slides)} slides planned")
         print(f"  files: {', '.join(outs) if outs else 'not rendered yet'}")
     return 0
 
@@ -388,6 +436,192 @@ def cmd_sizes(a) -> int:
 def cmd_selftest(a) -> int:
     from . import selftest
     return selftest.run(keep=a.keep)
+
+
+# --------------------------------------------------------------- presentations
+def _new_deck_spec(a):
+    photos = [Path(p).expanduser() for p in a.photos]
+    missing = [str(p) for p in photos if not p.exists()]
+    if missing:
+        raise deck_mod.DeckError("these files were not found: " + ", ".join(missing))
+    if not photos:
+        raise deck_mod.DeckError("name the photographs, for example ./ccb deck new inputs/*.jpg --name hayes-2026")
+
+    config.DECKS_DIR.mkdir(parents=True, exist_ok=True)
+    existing = config.DECKS_DIR / safe_name(a.name) if a.name else None
+    if existing and (existing / "deck.json").exists():
+        spec = deck_mod.DeckSpec.load(existing)
+        spec.data["photos"] = [os.path.relpath(_copy_into_inputs(p), spec.folder) for p in photos]
+        if a.style:
+            spec.design["style"] = a.style
+        if a.palette:
+            spec.design["palette"] = a.palette
+        if getattr(a, "hero", None):
+            spec.design["hero"] = a.hero
+        _apply_deck_text(spec, a)
+        spec.save()
+        print(f"updated {existing.relative_to(config.ROOT)} with {len(photos)} photographs")
+        return spec
+
+    folder = deck_mod.unique_deck_dir(config.DECKS_DIR, a.name or photos[0].stem)
+    stored = [os.path.relpath(_copy_into_inputs(p), folder) for p in photos]
+    spec = deck_mod.DeckSpec.create(
+        folder, folder.name, stored,
+        style=a.style or "editorial",
+        palette=a.palette or "",
+        hero=getattr(a, "hero", None) or "",
+    )
+    _apply_deck_text(spec, a)
+    spec.save()
+    print(f"new presentation {folder.relative_to(config.ROOT)}  ({len(stored)} photographs, 16:9)")
+    return spec
+
+
+def _print_deck_files(manifest: dict) -> None:
+    for item in manifest.get("files", []):
+        size = item["bytes"] / 1024
+        if item["format"] == "pdf":
+            pages = item.get("pages", [])
+            print(f"  {item['path']} - {len(pages)} slides at {deck_mod.SLIDE_W_IN:.2f} x "
+                  f"{deck_mod.SLIDE_H_IN:.2f} in, {size:.0f} KB")
+        else:
+            print(f"  {item['path']} - {item['px'][0]}x{item['px'][1]} px, {size:.0f} KB")
+
+
+def _write_deck_qa(spec, manifest: dict, problems: list[str]) -> Path:
+    facts = manifest.get("theme", {})
+    lines = [f"# QA: {spec.name} presentation", "",
+             f"- {manifest.get('dpi')} DPI, {len(manifest.get('slides', []))} slides, 16:9",
+             f"- Theme: {facts.get('style')} / {facts.get('palette')}", ""]
+    for item in manifest.get("files", []):
+        lines.append(f"- `{item['path']}` - {item['bytes'] / 1024:.0f} KB")
+        if item["format"] == "pdf":
+            for page in item.get("pages", []):
+                lines.append(f"  - {page['side']}: page box {page['w_in']:.2f} x {page['h_in']:.2f} in")
+        elif item.get("px"):
+            lines.append(f"  - {item['px'][0]} x {item['px'][1]} px")
+    lines += ["", "## Result", ""]
+    lines += [f"- {p}" for p in problems] if problems else [
+        "- PASS: every page is a real 16:9 slide at the declared size, and every file exists."]
+    lines.append("")
+    path = spec.folder / "out" / "qa.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def cmd_deck_new(a) -> int:
+    spec = _new_deck_spec(a)
+    slides = deck_mod.plan(spec)
+    print(deck_mod.summary(slides, spec))
+    print(f"\nNext: ./ccb deck check {spec.folder.relative_to(config.ROOT)}")
+    return 0
+
+
+def cmd_deck_plan(a) -> int:
+    spec = _deck_arg(a.deck)
+    slides = deck_mod.plan(spec)
+    print(deck_mod.summary(slides, spec))
+    print(f"\nslide plan and to-dos: {spec.folder.relative_to(config.ROOT)}/report.md")
+    return 0
+
+
+def cmd_deck_text(a) -> int:
+    spec = _deck_arg(a.deck)
+    _apply_deck_text(spec, a)
+    spec.save()
+    slides = deck_mod.plan(spec)
+    print("Words now:")
+    for role in deck_mod.DECK_TEXT:
+        print(f"  {role:<10} {spec.text.get(role) or '(empty)'}")
+    print()
+    print(deck_mod.summary(slides, spec))
+    report = deck_mod.check(spec, slides, dpi=int(spec.export.get("dpi", 150)))
+    deck_mod.print_report(report)
+    return 0 if not report["errors"] else 1
+
+
+def cmd_deck_check(a) -> int:
+    spec = _deck_arg(a.deck)
+    slides = deck_mod.load_slides(spec, replan=a.replan)
+    report = deck_mod.check(spec, slides, dpi=int(spec.export.get("dpi", 150)))
+    deck_mod.print_report(report)
+    return 0 if not report["errors"] else 1
+
+
+def cmd_deck_sheet(a) -> int:
+    spec = _deck_arg(a.deck)
+    slides = deck_mod.load_slides(spec, replan=a.replan)
+    out = Path(a.out) if a.out else spec.folder / "out" / "slides.jpg"
+    path = deck_mod.build_sheet(spec, slides, out)
+    print(f"contact sheet: {path}")
+    return 0
+
+
+def cmd_deck_render(a) -> int:
+    spec = _deck_arg(a.deck)
+    slides = deck_mod.load_slides(spec, replan=a.replan)
+    dpi = int(a.dpi or spec.export.get("dpi") or 150)
+    report = deck_mod.check(spec, slides, dpi=dpi)
+    if report["errors"]:
+        deck_mod.print_report(report)
+        print("render stopped: fix the errors above first", file=sys.stderr)
+        return 1
+    manifest = deck_mod.export(spec, slides, dpi=dpi, png=True if a.png else None,
+                               out_dir=Path(a.out) if a.out else None)
+    print(f"exported {spec.name}:")
+    _print_deck_files(manifest)
+    problems = deck_mod.verify_files(spec, manifest)
+    for problem in problems:
+        print(f"WARN {problem}")
+    print(f"next: ./ccb deck qa {spec.folder.relative_to(config.ROOT)}")
+    return 0 if not problems else 1
+
+
+def cmd_deck_qa(a) -> int:
+    spec = _deck_arg(a.deck)
+    manifest_path = spec.folder / "out" / "export.json"
+    if not manifest_path.exists():
+        print("nothing exported yet - run ./ccb deck render first", file=sys.stderr)
+        return 1
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    problems = deck_mod.verify_files(spec, manifest)
+    path = _write_deck_qa(spec, manifest, problems)
+    if problems:
+        print("QA found problems:")
+        for problem in problems:
+            print(f"  ERROR {problem}")
+        print(f"details: {path}")
+        return 1
+    print(f"qa: PASS - {len(manifest.get('slides', []))} slides, {manifest.get('dpi')} DPI, "
+          f"page size verified on the real PDF")
+    print(f"details: {path}")
+    return 0
+
+
+def cmd_deck_make(a) -> int:
+    spec = _new_deck_spec(a) if a.photos else _deck_arg(a.deck)
+    slides = deck_mod.plan(spec)
+    print(deck_mod.summary(slides, spec))
+    dpi = int(a.dpi or spec.export.get("dpi") or 150)
+    report = deck_mod.check(spec, slides, dpi=dpi)
+    if not deck_mod.print_report(report):
+        print("\nthe gate found errors: fix them, then run ./ccb deck make again", file=sys.stderr)
+        return 1
+    sheet_path = deck_mod.build_sheet(spec, slides, spec.folder / "out" / "slides.jpg")
+    print(f"\ncontact sheet: {sheet_path}")
+    manifest = deck_mod.export(spec, slides, dpi=dpi, png=True if a.png else None)
+    print(f"\nexported {spec.name}:")
+    _print_deck_files(manifest)
+    problems = deck_mod.verify_files(spec, manifest)
+    qa_path = _write_deck_qa(spec, manifest, problems)
+    print(f"qa: {'PASS' if not problems else 'PROBLEMS'}")
+    for problem in problems:
+        print(f"  ERROR {problem}")
+    print(f"\nDONE  presentation: {spec.folder.relative_to(config.ROOT)}")
+    print(f"      sheet: {sheet_path}")
+    print(f"      notes: {spec.folder.relative_to(config.ROOT)}/report.md")
+    print(f"      qa:    {qa_path}")
+    return 0 if not problems else 1
 
 
 # ------------------------------------------------------------------------ main
@@ -455,7 +689,55 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--dpi", type=int)
     x.add_argument("--no-back", action="store_true")
     x.add_argument("--draft", action="store_true")
-    sp.add_parser("status", help="what cards exist and where their files are")
+    def deck_design_flags(parser):
+        parser.add_argument("--style", help="style key (./ccb styles)")
+        parser.add_argument("--palette", help="palette key (./ccb styles)")
+        parser.add_argument("--hero", help="the photograph to put on the cover")
+
+    def deck_text_flags(parser):
+        parser.add_argument("--title")
+        parser.add_argument("--subtitle")
+        parser.add_argument("--greeting")
+        parser.add_argument("--message")
+        parser.add_argument("--signature")
+        parser.add_argument("--year")
+
+    x = sp.add_parser("deck", help="a 16:9 Christmas presentation from the same photographs")
+    dsp = x.add_subparsers(dest="deck_cmd", required=True)
+    d = dsp.add_parser("new", help="start a presentation and plan its slides")
+    d.add_argument("photos", nargs="+")
+    d.add_argument("--name")
+    deck_design_flags(d)
+    deck_text_flags(d)
+    d = dsp.add_parser("plan", help="re-plan the slides and write report.md")
+    d.add_argument("deck", nargs="?")
+    d = dsp.add_parser("text", help="change the words on a presentation")
+    d.add_argument("deck", nargs="?")
+    deck_text_flags(d)
+    d = dsp.add_parser("check", help="the presentation gate")
+    d.add_argument("deck", nargs="?")
+    d.add_argument("--replan", action="store_true", help="plan the slides again first")
+    d = dsp.add_parser("sheet", help="contact sheet of every slide")
+    d.add_argument("deck", nargs="?")
+    d.add_argument("--replan", action="store_true")
+    d.add_argument("-o", "--out")
+    d = dsp.add_parser("render", help="write the presentation PDF")
+    d.add_argument("deck", nargs="?")
+    d.add_argument("--dpi", type=int)
+    d.add_argument("--png", action="store_true", help="also write one PNG per slide")
+    d.add_argument("--replan", action="store_true")
+    d.add_argument("-o", "--out")
+    d = dsp.add_parser("qa", help="verify the exported presentation")
+    d.add_argument("deck", nargs="?")
+    d = dsp.add_parser("make", help="plan, gate, sheet, export and QA in one go")
+    d.add_argument("photos", nargs="*")
+    d.add_argument("--deck", help="an existing presentation folder or deck.json")
+    d.add_argument("--name")
+    deck_design_flags(d)
+    deck_text_flags(d)
+    d.add_argument("--dpi", type=int)
+    d.add_argument("--png", action="store_true")
+    sp.add_parser("status", help="what cards and presentations exist and where their files are")
     sp.add_parser("styles", help="the eight styles and six palettes")
     sp.add_parser("sizes", help="the trim sizes")
     x = sp.add_parser("selftest", help="end-to-end check with generated photographs")
@@ -482,11 +764,27 @@ COMMANDS = {
     "selftest": cmd_selftest,
 }
 
+DECK_COMMANDS = {
+    "new": cmd_deck_new,
+    "plan": cmd_deck_plan,
+    "text": cmd_deck_text,
+    "check": cmd_deck_check,
+    "sheet": cmd_deck_sheet,
+    "render": cmd_deck_render,
+    "qa": cmd_deck_qa,
+    "make": cmd_deck_make,
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.cmd == "deck":
+            return DECK_COMMANDS[args.deck_cmd](args)
         return COMMANDS[args.cmd](args)
+    except deck_mod.DeckError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     except SpecError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
