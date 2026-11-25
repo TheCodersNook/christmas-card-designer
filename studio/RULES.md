@@ -190,10 +190,11 @@ not an error, because a deliberately inset colophon can work.
 ```
 
 Kinds: `holly`, `snow`, `stars`, `confetti`, `none`. `density` runs roughly
-0..1.6 and overrides the direction's density. If you list ornaments, they
-**replace** the direction's decoration; if you list none, the direction's
-decoration is used. Ornaments are always kept out of text zones and photographs,
-so they cannot cover a face or a word.
+0..1.6 and overrides the direction's density. If you list ornaments they are
+drawn; if you list none, nothing is drawn. The direction's `decoration` is a
+suggestion you may copy into `ornaments` or `chrome`, not something applied for
+you. Ornaments are always kept out of text zones and photographs, so they cannot
+cover a face or a word.
 
 ### 2.3.1 Chrome (optional, and off by default)
 
@@ -265,10 +266,14 @@ the direction is all capitals.
 
 ## 4. Directions, palettes and what they are for
 
-A **direction** is not a template. It is a bundle of guidance and defaults:
-three typefaces, a palette, an alignment, a margin, a decoration, a border, a
-photographic treatment and a paragraph of advice. The agent may follow it
-closely or borrow only its palette and typefaces. `./ccb directions` prints them.
+A **direction** is not a template. It is a bundle of guidance and shared type:
+three typefaces, a palette, an alignment, a margin, a weight and tracking, a
+preferred photographic treatment, a decoration and a border it *suggests*, and a
+paragraph of advice. The palette, typefaces, alignment, margin and weight are
+what the engine actually uses as defaults; a border, decoration or paper texture
+appears only if the composition's `chrome` asks for one. The agent may follow a
+direction closely or borrow only its palette and typefaces. `./ccb directions`
+prints them.
 
 | key | character |
 | --- | --- |
