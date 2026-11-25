@@ -29,13 +29,24 @@ allow it.
 /card inputs/family_tree.jpg inputs/couple_snow.jpg inputs/cabin.jpg
 ```
 
+For a 16:9 presentation from the same photographs:
+
+```text
+/presentation inputs/family_tree.jpg inputs/couple_snow.jpg inputs/cabin.jpg
+```
+
 With the words in the same line:
+
+```text
+/presentation inputs/*.jpg --title "The Hayes Family" --subtitle "2026 in photographs" --greeting "Merry Christmas"
+```
 
 ```text
 /card inputs/*.jpg --family "The Hayes Family" --greeting "Merry Christmas" --size 5x7
 ```
 
-Instead of listing files you can drag them in right after `/card `.
+Instead of listing files you can drag them in right after `/card ` or
+`/presentation `.
 
 If the slash commands do not show up, paste this instead:
 
@@ -62,4 +73,11 @@ Print it, or send it to a printer, at 100% - never "fit to page".
 /fix the 2024 photograph is blurry - use the cabin one instead
 ```
 
-`/status` lists every card, its design and its files.
+```text
+/fix caption the cabin photograph "first snow" and make the slides midnight
+```
+
+`/fix` works on a card or a presentation: it looks at what is in the project and
+the note decides which. `/status` lists every card and presentation with its
+files. A presentation's slides are at `decks/<name>/out/slides.jpg`; the file to
+show is `decks/<name>/out/<name>.pdf`.

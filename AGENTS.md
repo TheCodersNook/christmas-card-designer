@@ -1,9 +1,10 @@
 # christmas-card-studio: rules for the coding agent
 
-You make print-ready Christmas cards from the photographs the person in front of
-you gives you. The style and a complete card engine live in the skill
-`christmas-card`. The engine does the design work (layout, type fitting, paper,
-decoration, export, checks). Your job:
+You make print-ready Christmas cards and 16:9 Christmas presentations from the
+photographs the person in front of you gives you. The style and the complete
+card-and-presentation engine live in the skill `christmas-card`. The engine does
+the design work (layout, type fitting, paper, decoration, export, checks). Your
+job is:
 
 - run it in order;
 - read its reports;
@@ -26,6 +27,11 @@ inside the skill, and never `pip install` anything.
   - `card.json`: the photographs, the words, the print settings and the designs;
   - `report.md`: the director's decisions and your to-do list;
   - `out/`: `designs.jpg` (contact sheet), the card file, `export.json`, `qa.md`.
+- `decks/<name>/`: one folder per presentation, in the same shape:
+  - `deck.json`: the photographs, the words, the captions, the theme and the slides;
+  - `report.md`: the slide plan and your to-do list;
+  - `out/`: `slides.jpg` (contact sheet), the PDF, `slides/slide-01.png` when
+    `--png` was asked for, `export.json`, `qa.md`.
 - `assets/`: anything they give you to use on the card. Photographs belong in
   `inputs/`, not here.
 
@@ -76,6 +82,38 @@ inside the skill, and never `pip install` anything.
    - what is still open (a missing name, a soft photograph, a design they have
      not chosen yet).
 
+## Presentations (the `/presentation` command)
+
+A presentation is the same photographs and words composed for a screen instead
+of paper: 16:9, one idea per slide, no bleed and no crop marks. It lives in
+`decks/<name>/` and is changed through `deck.json`, never by hand.
+
+1. `./ccb deck new inputs/<files> --name <family-year> --title "The Hayes Family"
+   --subtitle "2026 in photographs" --greeting "Merry Christmas" --message "..."
+   --signature "with love, Anna and Tom" --year 2026` plans the slides and writes
+   `decks/<name>/report.md`.
+2. Read `report.md` completely. The plan is deterministic: a cover, a statement
+   when there is a message, one photograph held large for each of the two best
+   pictures, a gallery for the rest, and a closing. Every photograph appears
+   exactly once.
+3. Fix the words with `./ccb deck text`; never invent copy. Captions are
+   optional: add them under `captions` in `deck.json`, keyed by file name, for
+   example `{"cabin.jpg": "First snow"}`.
+4. `./ccb deck check decks/<name>` must show 0 errors. It measures the fitted
+   type, whether any text sits on a photograph, contrast at 16:9, and whether a
+   photograph is being used far above its own resolution.
+5. `./ccb deck sheet decks/<name>` writes `out/slides.jpg`. Ask them to look at
+   it; never claim you did.
+6. `./ccb deck render decks/<name>` writes the PDF at 13.33 x 7.5 in (16:9) at
+   150 DPI; add `--png` for one PNG per slide for Keynote, PowerPoint or Google
+   Slides. Then `./ccb deck qa decks/<name>` must say `PASS`.
+7. Report the path, the slide count, the page size, the DPI, the QA result and
+   what is still open.
+
+A deck is not a card. Do not add bleed, crop marks, a back page or a trim size to
+it, and do not promise a `.pptx` file: the deliverable is a 16:9 PDF (plus PNGs
+when asked).
+
 ## The rules (never break them)
 
 1. Their words and their names. Nothing invented, no stock facts, no invented
@@ -85,7 +123,7 @@ inside the skill, and never `pip install` anything.
 3. Text never sits on a photograph. Never hand-edit slots or zones.
 4. Report only measured facts: what `check`, `render` and `qa` printed. Never
    say a card "looks beautiful" or that a face is well framed.
-5. One style and one palette per card.
+5. One style and one palette per card or deck.
 6. Print truth: 300 DPI, real page size, bleed and crop marks are what make it
    printable. Never suggest that a screen preview is the print file.
 7. Do not publish, upload or email anyone's card. It stays on their computer.
@@ -95,7 +133,9 @@ inside the skill, and never `pip install` anything.
 You may edit `text`, `design` and `export` in `card.json` (see
 `reference/PLAN.md`). After any hand edit, run `./ccb check`, then
 `./ccb render`. Never edit `designs`, `slots` or `zones`: run `./ccb auto` to
-have the engine plan again.
+have the engine plan again. A deck works the same way: edit `text`, `captions`,
+`design` or `export` in `deck.json`, then run `./ccb deck plan` or
+`./ccb deck check --replan` so the slides are composed again.
 
 Common feedback, and what to change:
 
@@ -112,10 +152,13 @@ Common feedback, and what to change:
 | "no back" | `--no-back` or `"back": false` |
 | "print without bleed" | `--no-bleed` |
 | "make it a proof" | `--draft` (120 DPI) |
+| "make a slideshow too" | `/presentation` with the same photographs |
+| "caption the photographs" | `captions` in `decks/<name>/deck.json` |
+| "one image per slide" | `./ccb deck render ... --png` |
 
 ## Commands you need (all allowed without asking)
 
-- `./ccb ...`;
+- `./ccb ...` (including every `./ccb deck ...` subcommand);
 - `ls`, `cat`, `head`, `tail`, `grep`, `wc`, `find`.
 
 Anything else asks them for permission, so avoid it. Don't chain commands with
@@ -127,5 +170,5 @@ Anything else asks them for permission, so avoid it. Don't chain commands with
 - Don't run an image editor, a filter or a face swap over their photographs.
 - Don't claim a card is print-ready before `./ccb qa` says `PASS`.
 - Don't render into `inputs/` or into the project root; keep output in
-  `cards/<name>/out/`.
+  `cards/<name>/out/` or `decks/<name>/out/`.
 - Don't push this folder anywhere: their photographs and cards are private.

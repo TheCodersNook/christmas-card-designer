@@ -88,6 +88,22 @@ never colour alone. Use the palette for colour.
 
 Never invent a name to fill a field. An empty field is better than a wrong one.
 
+## Presentations
+
+A deck is a sequence, not a card. The rules that change:
+
+1. **One idea per slide.** Cover, statement, one photograph held large, a gallery
+   for the rest, a closing. Never a card's six-design comparison on screen.
+2. **The picture is the point.** On a plate slide the photograph runs the full
+   height of the page; the words stay in the paper column beside it, never on it.
+3. **Type for the back of the room.** Titles and the statement are set large;
+   eyebrows, captions and folios stay quiet but never below about 9 pt at 150
+   DPI. A long statement is shortened, not shrunk.
+4. **16:9 and nothing else.** No bleed, no crop marks, no trim size, no back
+   page. 150 DPI for screens, 200 if the deck will be printed.
+5. **The same words rules apply.** No invented title, year or caption. The
+   closing repeats the greeting and the signature; it is not a second message.
+
 ## House notes
 
 Add lasting preferences here with the date, for example:

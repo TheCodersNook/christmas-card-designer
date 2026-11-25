@@ -1,13 +1,17 @@
 ---
 name: christmas-card
-description: The Christmas card studio as one self-contained skill. It turns a family's own photographs into print-ready Christmas cards: a greeting, a family name, a message and a signature composed with six deterministic layout engines, eight card styles, six palettes, five trim sizes, decoration that avoids faces, and a true-size 300 DPI PDF/PNG/JPEG export with bleed and crop marks. It ships its own engine (Python + Pillow + ReportLab, runs anywhere), so it works outside OpenCode too. Use it whenever someone gives photographs and asks for a Christmas card, a holiday card, a family card, a photo card, a card to print, "make our card", a matching back page, or names this skill.
+description: The Christmas studio as one self-contained skill. It turns a family's own photographs into print-ready Christmas cards - a greeting, a family name, a message and a signature composed with six deterministic layout engines, eight card styles, six palettes, five trim sizes, decoration that avoids faces, and a true-size 300 DPI PDF/PNG/JPEG export with bleed and crop marks - and into 16:9 Christmas presentations: a cover, a statement, numbered photographic plates, a gallery and a closing, exported as a 150 DPI PDF plus optional PNGs. It ships its own engine (Python + Pillow + ReportLab, runs anywhere), so it works outside OpenCode too. Use it whenever someone gives photographs and asks for a Christmas card, a holiday card, a family card, a photo card, a card to print, "make our card", a matching back page, a Christmas presentation, a slideshow, a year-in-review deck, or names this skill.
 ---
 
-# christmas-card: a card studio, end to end
+# christmas-card: a card and presentation studio, end to end
 
-The photographs are the card. Everything else - the greeting, the paper, the
+The photographs are the work. Everything else - the greeting, the paper, the
 margin, the rule, the holly - exists so the photographs look like they were
-printed on purpose.
+printed (or projected) on purpose.
+
+Two outputs share one engine, one set of styles and the same rules: a **card**
+(a small printed object, 300 DPI, bleed and crop marks) and a **presentation**
+(16:9, one idea per slide, no bleed).
 
 The judgements that make a card look designed are in the engine, not in the
 model: measured typography, physical spacing, cover crops, deterministic
@@ -43,6 +47,9 @@ command) and `AGENTS.md` (the workflow).
    say what the report measured, and ask them to look at `out/designs.jpg`.
 8. **No stock or generated imagery in their card.** Only the photographs they
    supplied, plus vector decoration the engine draws.
+9. **A presentation is not a card.** It is always 16:9, has no bleed, no crop
+   marks, no back page and no trim size, and its deliverable is a PDF (plus PNGs
+   when asked) - never promise a `.pptx`.
 
 ## The vocabulary
 
@@ -63,6 +70,9 @@ command) and `AGENTS.md` (the workflow).
 - **Six palettes**: evergreen, cranberry, midnight, nordic, brass, peppermint.
 - **Type roles**: `greeting`, `family`, `message`, `signature`, `year`. All but
   the greeting are optional; the greeting is what a card is for.
+- **Five slide kinds** for presentations: `cover`, `statement`, `hero` (a
+  numbered photographic plate), `grid` (the gallery), `closing`. The planner uses
+  each photograph exactly once and keeps the strongest for the cover.
 
 ## The fast path
 
@@ -78,6 +88,18 @@ One command: copies the photographs into `inputs/`, writes
 `cards/hayes-2026/card.json`, plans six designs, runs the gate, writes the
 contact sheet, exports the card and verifies the files. Follow it with
 `./ccb check` and `./ccb render` whenever you change anything.
+
+For the presentation from the same photographs:
+
+```
+./ccb deck make inputs/*.jpg --name hayes-2026 \
+    --title "The Hayes Family" --subtitle "2026 in photographs" \
+    --greeting "Merry Christmas" --message "A year of small adventures." \
+    --signature "with love, Anna and Tom" --year 2026
+```
+
+It plans the slides, gates them, writes `out/slides.jpg`, exports the 16:9 PDF
+and verifies it. Add `--png` for one image per slide.
 
 ## The run (gates in order)
 
@@ -129,14 +151,18 @@ contact sheet, exports the card and verifies the files. Follow it with
 | "try another style" / "less classic" | `--style modern` (or `editorial`, `nordic`, `vintage`, `joyful`, `gallery`) in `card.json`, then `./ccb auto` |
 | "warmer" / "darker" / "more Christmassy" | change `design.palette` (evergreen, cranberry, midnight, nordic, brass, peppermint) |
 | "use design 3" | `./ccb render cards/<name> --design 3` |
-| "bigger photos" | pick the `banner` layout or the `gallery` style |
-| "less busy" | `--style modern` or `editorial`; drop photographs they do not need |
+| "bigger photos" | pick the `banner`, `gallery` or `editorial` layout, or `--style gallery` |
+| "less busy" | `--style modern` or `../card/out` padding: use `editorial`; drop photographs they do not need |
 | "put grandma first" | move that file to the front of `photos`, set `design.hero`, then `./ccb auto` |
 | "change the wording" | `./ccb text ...`, then `./ccb check` and `./ccb render` |
 | "smaller card" / "different paper" | `--size 4x6`, `5x5`, `a6`, `a2`, or `--landscape` |
 | "I want an image, not a PDF" | `./ccb render cards/<name> --format png` |
 | "no back page" | `"back": false` in `export`, or `./ccb render --no-back` |
 | "bleed/crop marks" | `--no-bleed` to drop them; they are on by default |
+| "make a slideshow / presentation too" | `./ccb deck make <photos> --name x --title ...` |
+| "caption this photograph" | add it under `captions` in `decks/<name>/deck.json`, then `./ccb deck plan` |
+| "one image per slide" | `./ccb deck render decks/<name> --png` |
+| "bigger / smaller slides" | the deck is fixed at 16:9; change `--dpi` instead |
 
 When a note is a lasting preference ("always leave the year off"), add it to
 `reference/STYLE.md` under "House notes" with the date, so it holds next year.
