@@ -14,7 +14,7 @@
   ./ccb faces [<photo>...]            install/scan with YuNet (Haar fallback)
   ./ccb deck new <photo>... --name x  start a 16:9 presentation
   ./ccb deck brief|layout|check|see|sheet|render|qa
-  ./ccb status | directions | sizes   what exists, and the rulebook's vocabulary
+  ./ccb status | palette | sizes      what exists, and the rulebook's vocabulary
   ./ccb selftest                      end-to-end check with generated photographs
 
 There are no templates. The agent writes compositions against studio/rules.json
@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from . import check as gate, compose, config, deck as deck_mod, export as export_mod, faces as faces_mod
-from . import fonts, samples, see as see_mod, sheet as sheet_mod
+from . import fonts, samples, see as see_mod, sheet as sheet_mod, typefit
 from .photos import PhotoError, load
 from .spec import CardSpec, SpecError, safe_name, unique_card_dir
 
@@ -130,7 +130,7 @@ def _card_summary(spec: CardSpec) -> str:
     fronts = spec.front_compositions
     return (f"{spec.name}: {len(spec.photo_paths)} photographs, {len(fronts)} front composition"
             f"{'s' if len(fronts) != 1 else ''}, {1 if spec.back() else 0} back, "
-            f"{spec.style.label} / {spec.palette.label}, "
+            f"palette {spec.palette.label}, "
             f"{spec.card_inches[0]:g}x{spec.card_inches[1]:g} in")
 
 
@@ -147,7 +147,7 @@ def cmd_doctor(a) -> int:
     print(f"  fonts       {fonts.installed()}/{fonts.total()} studio fonts in assets/fonts")
     faces = faces_mod.status()
     print(f"  faces       {faces['detector']}" + (f" (OpenCV {faces['opencv_version']})" if faces["opencv"] else " - install opencv-python-headless"))
-    print(f"  rulebook    {config.RULES_PATH}")
+    print(f"  rulebook    {config.RULES_PATH} (version {config.RULES.get('version', '?')})")
     print(f"  cards       {len(list(config.CARDS_DIR.glob('*/card.json'))) if config.CARDS_DIR.exists() else 0} in cards/, "
           f"{len(list(config.DECKS_DIR.glob('*/deck.json'))) if config.DECKS_DIR.exists() else 0} presentation(s) in decks/")
     print(f"  project     {config.ROOT}")
@@ -166,16 +166,15 @@ def cmd_add(a) -> int:
     folder.mkdir(parents=True, exist_ok=True)
     photos = _photos_for(folder, a.photos)
     spec = CardSpec.create(
-        folder, safe_name(name), photos,
-        direction=a.direction, palette=a.palette, size=a.size,
+        folder, safe_name(name), photos, size=a.size,
         orientation="landscape" if a.landscape else "portrait",
     )
-    for role in config.TEXT_ROLES:
+    for role in config.TEXT_PARTS:
         value = getattr(a, role, None)
         if value is not None:
             spec.text[role] = str(value).strip()
     spec.save()
-    print(f"new card cards/{folder.name}  ({len(photos)} photographs, {spec.style.label}, "
+    print(f"new card cards/{folder.name}  ({len(photos)} photographs, palette {spec.palette.label}, "
           f"{spec.card_inches[0]:g}x{spec.card_inches[1]:g} in)")
     print(f"\nNext: ./ccb brief cards/{folder.name}")
     print("      then write compositions and install them with ./ccb layout")
@@ -210,12 +209,12 @@ def cmd_layout(a) -> int:
 
 def cmd_text(a) -> int:
     spec = _card(a.card)
-    for role in config.TEXT_ROLES:
+    for role in config.TEXT_PARTS:
         value = getattr(a, role, None)
         if value is not None:
             spec.text[role] = str(value).strip()
     spec.save()
-    for role in config.TEXT_ROLES:
+    for role in config.TEXT_PARTS:
         print(f"  {role:<10} {spec.text.get(role) or '(empty)'}")
     return 0
 
@@ -322,7 +321,7 @@ def cmd_make(a) -> int:
 def brief_head(spec: CardSpec) -> str:
     w, h = spec.card_inches
     return (f"{spec.name}: {len(spec.photo_paths)} photographs, {w:g}x{h:g} in, "
-            f"{spec.style.label} / {spec.palette.label}. Nothing has been composed yet.")
+            f"palette {spec.palette.label}. Nothing has been composed yet.")
 
 
 def cmd_faces(a) -> int:
@@ -367,7 +366,7 @@ def cmd_status(a) -> int:
             fronts = len(spec.front_compositions)
             label = f"{fronts} front composition{'s' if fronts != 1 else ''}" if fronts else "not composed yet"
             print(f"  {spec.name}")
-            print(f"    {len(spec.photo_paths)} photographs, {spec.style.label}, "
+            print(f"    {len(spec.photo_paths)} photographs, palette {spec.palette.label}, "
                   f"{spec.card_inches[0]:g}x{spec.card_inches[1]:g} in, {label}")
     decks = sorted(config.DECKS_DIR.glob("*/deck.json")) if config.DECKS_DIR.exists() else []
     if decks:
@@ -375,19 +374,30 @@ def cmd_status(a) -> int:
         for path in decks:
             spec = deck_mod.DeckSpec.load(path)
             print(f"  {spec.name}")
-            print(f"    {len(spec.photo_paths)} photographs, {spec.style.label} / {spec.palette.label}, "
+            print(f"    {len(spec.photo_paths)} photographs, palette {spec.palette.label}, "
                   f"{len(spec.compositions)} slide(s)")
     if not cards and not decks:
         print("nothing yet: ./ccb samples, then ./ccb new inputs/*.jpg --name my-card")
     return 0
 
 
-def cmd_directions(a) -> int:
-    for key, st in config.STYLES.items():
-        print(f"{key:<12} {st.label}  ({st.palette})")
-        print(f"             {st.blurb}")
-        print(f"             {st.guidance}")
-    print("\nEdit studio/rules.json to change any of this; studio/RULES.md explains every field.")
+def cmd_palette(a) -> int:
+    """Show the colours this card is using and the colours its photographs offer."""
+    spec = _card(a.card)
+    pa = spec.palette
+    print(f"{spec.name}: palette {pa.label}")
+    for key in config.PALETTE_KEYS:
+        hex_value = pa.token(key)
+        print(f"  {key:<9} {hex_value}")
+    if not spec.system.get("palette"):
+        print("\nThese were sampled from the photographs. Replace them in the layout file's")
+        print("'system.palette' - any six #hex colours, as long as the type stays readable.")
+    print("\nColours in the photographs (most common first):")
+    for i, photo in enumerate(compose.load_photo_stats(spec)):
+        print(f"  [{i}] {photo.path.name}: " + "  ".join(c for c, _ in photo.colours[:8]))
+    print("\nTypefaces installed: " + ", ".join(f"{k} ({v['label']})" for k, v in typefit.FAMILIES.items()))
+    print("Every zone sets its own size, face, weight, tracking and leading; there is no")
+    print("house scale. studio/RULES.md explains the numbers.")
     return 0
 
 
@@ -396,6 +406,13 @@ def cmd_sizes(a) -> int:
         print(f"{key:<8} {w:g} x {h:g} in")
     print(f"\nbleed {config.BLEED_IN} in; export dpi {config.MIN_DPI}-{config.MAX_DPI}")
     return 0
+
+
+def cmd_fonts(a) -> int:
+    have = fonts.ensure(force=bool(getattr(a, "force", False)))
+    print(fonts.status())
+    print(f"installed in {config.FONT_DIR}")
+    return 0 if have else 1
 
 
 def cmd_selftest(a) -> int:
@@ -409,14 +426,13 @@ def cmd_deck_new(a) -> int:
     folder = unique_card_dir(config.DECKS_DIR, name)
     folder.mkdir(parents=True, exist_ok=True)
     photos = _photos_for(folder, a.photos)
-    spec = deck_mod.DeckSpec.create(folder, safe_name(name), photos,
-                                    direction=a.direction, palette=a.palette)
+    spec = deck_mod.DeckSpec.create(folder, safe_name(name), photos)
     for role in deck_mod.DECK_TEXT_ROLES:
         value = getattr(a, role, None)
         if value is not None:
             spec.text[role] = str(value).strip()
     spec.save()
-    print(f"new presentation decks/{folder.name}  ({len(photos)} photographs, 16:9, {spec.style.label})")
+    print(f"new presentation decks/{folder.name}  ({len(photos)} photographs, 16:9, palette {spec.palette.label})")
     print(f"\nNext: ./ccb deck brief decks/{folder.name}")
     return 0
 
@@ -522,7 +538,7 @@ def cmd_deck_make(a) -> int:
     out.mkdir(parents=True, exist_ok=True)
     stats = compose.load_photo_stats(spec)  # type: ignore[arg-type]
     see_mod.photos_sheet(spec, stats).save(out / "photos.jpg", quality=88)
-    print(f"\n{spec.name}: {len(spec.photo_paths)} photographs, 16:9, {spec.style.label}. No slides yet.")
+    print(f"\n{spec.name}: {len(spec.photo_paths)} photographs, 16:9, palette {spec.palette.label}. No slides yet.")
     print(f"brief: {_rel(spec, spec.folder / 'brief.md')}")
     print(f"photographs: {_rel(spec, out / 'photos.jpg')}")
     print("\nNow compose the slides, then:")
@@ -549,15 +565,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor").set_defaults(func=cmd_doctor)
     sub.add_parser("samples").set_defaults(func=cmd_samples)
     sub.add_parser("status").set_defaults(func=cmd_status)
-    sub.add_parser("directions", aliases=["styles"]).set_defaults(func=cmd_directions)
+    colours = sub.add_parser("palette", aliases=["colours"], help="the card's colours and the colours in its photographs")
+    colours.add_argument("card", nargs="?")
+    colours.set_defaults(func=cmd_palette)
     sub.add_parser("sizes").set_defaults(func=cmd_sizes)
     sub.add_parser("selftest").set_defaults(func=cmd_selftest)
+    font = sub.add_parser("fonts", help="download the studio's OFL typefaces")
+    font.add_argument("--force", action="store_true")
+    font.set_defaults(func=cmd_fonts)
 
     add = sub.add_parser("new", aliases=["add"], help="start a card from photographs")
     add.add_argument("photos", nargs="+")
     add.add_argument("--name", default=None)
-    add.add_argument("--direction", default="classic")
-    add.add_argument("--palette", default="")
     add.add_argument("--size", default="5x7")
     add.add_argument("--landscape", action="store_true")
     _text_args(add)
@@ -613,8 +632,6 @@ def build_parser() -> argparse.ArgumentParser:
     make = sub.add_parser("make", help="start a card, write its brief, show the photographs")
     make.add_argument("photos", nargs="+")
     make.add_argument("--name", default=None)
-    make.add_argument("--direction", default="classic")
-    make.add_argument("--palette", default="")
     make.add_argument("--size", default="5x7")
     make.add_argument("--landscape", action="store_true")
     _text_args(make)
@@ -631,8 +648,6 @@ def build_parser() -> argparse.ArgumentParser:
     dn = dsub.add_parser("new")
     dn.add_argument("photos", nargs="+")
     dn.add_argument("--name", default=None)
-    dn.add_argument("--direction", default="editorial")
-    dn.add_argument("--palette", default="")
     _text_args(dn, deck=True)
     dn.set_defaults(func=cmd_deck_new)
 
@@ -681,8 +696,6 @@ def build_parser() -> argparse.ArgumentParser:
     dm = dsub.add_parser("make")
     dm.add_argument("photos", nargs="+")
     dm.add_argument("--name", default=None)
-    dm.add_argument("--direction", default="editorial")
-    dm.add_argument("--palette", default="")
     _text_args(dm, deck=True)
     dm.set_defaults(func=cmd_deck_make)
     return p

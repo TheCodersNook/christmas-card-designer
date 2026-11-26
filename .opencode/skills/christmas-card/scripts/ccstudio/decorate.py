@@ -27,12 +27,12 @@ def _free(r: Rect, keepout: Iterable[Rect], pad: float) -> bool:
     return not any(_overlaps(r, k, pad) for k in keepout)
 
 
-def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, style: config.Style,
+def _scatter(draw: ImageDraw.ImageDraw, kind: str, palette: config.Palette, density: float,
              width: int, height: int, keepout: list[Rect], seed: int,
              ox: float = 0.0, oy: float = 0.0) -> None:
     rng = random.Random(seed)
     short = min(width, height)
-    density = max(0.0, min(1.5, style.density))
+    density = max(0.0, min(1.5, density))
     if kind == "snow":
         count = int(70 * density) + 10
         for _ in range(count):
@@ -100,21 +100,20 @@ def _leaf(draw: ImageDraw.ImageDraw, x: float, y: float, size: float, angle_deg:
     draw.polygon([left, mid_l, tip, mid_r, right], fill=color)
 
 
-def decorate(img: Image.Image, style: config.Style, palette: config.Palette,
+def decorate(img: Image.Image, kind: str, density: float, palette: config.Palette,
              width: int, height: int, keepout: list[Rect], seed: int,
              offset: tuple[int, int] = (0, 0)) -> None:
-    if style.decoration and style.decoration != "none" and style.density > 0:
+    if kind and kind != "none" and density > 0:
         ox, oy = offset
-        _scatter(ImageDraw.Draw(img), style.decoration, palette, style, width, height,
+        _scatter(ImageDraw.Draw(img), kind, palette, density, width, height,
                  keepout, seed, ox, oy)
 
 
-def border(img: Image.Image, style: config.Style, palette: config.Palette,
+def border(img: Image.Image, kind: str, palette: config.Palette,
            width: int, height: int, margin_px: float,
            offset: tuple[int, int] = (0, 0)) -> None:
     """An optional printed border, drawn just inside the trim so bleed cannot clip it."""
     short = min(width, height)
-    kind = style.border
     if kind in ("", "none"):
         return
     ox, oy = offset

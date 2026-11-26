@@ -25,8 +25,10 @@ def geometry(spec: CardSpec, design: layouts.Design) -> tuple[list[str], list[st
     return errors, warnings
 
 
-def typography(spec: CardSpec, design: layouts.Design) -> tuple[list[str], list[str], dict[str, Any]]:
+def typography(spec: CardSpec, design: layouts.Design,
+               placed_elsewhere: set[str] | None = None) -> tuple[list[str], list[str], dict[str, Any]]:
     """Render small and read the real measured type back."""
+    placed_elsewhere = placed_elsewhere or set()
     errors: list[str] = []
     warnings: list[str] = []
     try:
@@ -35,25 +37,27 @@ def typography(spec: CardSpec, design: layouts.Design) -> tuple[list[str], list[
         errors.append(f"{design.label}: could not draw the composition ({exc})")
         return errors, warnings, {}
     blocks = result.metrics.get("blocks", [])
-    short_px = min(result.metrics["trim_px"])
     dpi = result.metrics["dpi"]
     min_pt = float(config.COMPOSE.get("type_safety", {}).get("min_pt", 7.0))
     for block in blocks:
+        word = block.get("word") or block.get("role", "copy")
         if block.get("truncated"):
-            warnings.append(f"{design.label}: the {block['role']} was shortened to fit")
-        if block["role"] in ("message", "signature", "caption") and block["pt"] < min_pt:
-            warnings.append(f"{design.label}: the {block['role']} prints at {block['pt']:.1f} pt, "
-                            f"below the {min_pt:.1f} pt floor; shorten it or give it a larger zone")
-        if block["role"] in ("greeting", "family", "title", "statement") and block["size_px"] < short_px * 0.022:
-            warnings.append(f"{design.label}: the {block['role']} is too small to lead the card")
+            warnings.append(f"{design.label}: the {word} was shortened to fit its zone")
+        if block.get("shrunk"):
+            warnings.append(f"{design.label}: the {word} had to shrink from {block.get('size', 0):g} "
+                            f"to {block['size_px'] / max(1, result.metrics['trim_px'][0]):.3f} of the page to fit")
+        if block["pt"] < min_pt:
+            warnings.append(f"{design.label}: the {word} prints at {block['pt']:.1f} pt, "
+                            f"below the {min_pt:.1f} pt floor; set a larger size or shorten it")
         contrast = block.get("color", {}).get("contrast", 9)
         if contrast < 3.0:
-            warnings.append(f"{design.label}: {block['role']} contrast is {contrast}:1")
+            warnings.append(f"{design.label}: {word} contrast is {contrast}:1")
     if not blocks:
         errors.append(f"{design.label}: no text reached the card")
-    for role in config.TEXT_ROLES:
-        if spec.text.get(role) and not any(b["role"] == role for b in blocks):
-            warnings.append(f"{design.label}: the {role} could not be placed")
+    for word in config.TEXT_PARTS:
+        if spec.text.get(word) and word not in placed_elsewhere and not any(
+                (b.get("word") or b.get("role")) == word for b in blocks):
+            warnings.append(f"{design.label}: the {word} could not be placed")
     facts = {
         "blocks": blocks,
         "smallest_pt": min((b["pt"] for b in blocks), default=0),
@@ -104,7 +108,6 @@ def check(spec: CardSpec, design: layouts.Design | None = None, dpi: int = 300) 
         "photos": len(spec.photo_paths),
         "coverage": round(design.coverage + (1.0 if design.background.get("photo") is not None else 0.0), 3),
         "card_in": list(spec.card_inches),
-        "style": spec.style.label,
         "palette": spec.palette.label,
         "dpi": dpi,
     })
@@ -125,7 +128,9 @@ def check_card(spec: CardSpec, dpi: int = 300) -> dict[str, Any]:
         report["warnings"] += [f"{design.label}: {i.message}" for i in issues if i.level == "warn"]
     front = spec.front_design()
     if front is not None:
-        e, w, facts = typography(spec, front)
+        elsewhere = {str(z.get("word")) for comp in spec.compositions if comp is not spec.front()
+                     for z in comp.get("zones", []) if isinstance(z, dict)}
+        e, w, facts = typography(spec, front, elsewhere)
         report["errors"] += e
         report["warnings"] += w
         report["facts"] = facts
@@ -134,10 +139,12 @@ def check_card(spec: CardSpec, dpi: int = 300) -> dict[str, Any]:
             "design": front.label, "engine": "composition",
             "photos": len(spec.photo_paths),
             "coverage": round(front.coverage + (1.0 if front.background.get("photo") is not None else 0.0), 3),
-            "card_in": list(spec.card_inches), "style": spec.style.label,
+            "card_in": list(spec.card_inches),
             "palette": spec.palette.label, "dpi": dpi,
         })
-    report["warnings"] += [i.message for i in compose.validate_card(spec) if i.level == "warn"]
+    card_issues = compose.validate_card(spec)
+    report["errors"] += [i.message for i in card_issues if i.level == "error"]
+    report["warnings"] += [i.message for i in card_issues if i.level == "warn"]
     return report
 
 
@@ -146,7 +153,7 @@ def print_report(report: dict[str, Any]) -> bool:
     if facts:
         print(f"design  {facts.get('design')} (free composition)")
         card = facts.get("card_in", ["?", "?"])
-        print(f"card    {card[0]} x {card[1]} in, {facts.get('style')} / {facts.get('palette')}")
+        print(f"card    {card[0]} x {card[1]} in, palette {facts.get('palette')}")
         print(f"photos  {facts.get('photos')} covering {facts.get('coverage', 0) * 100:.0f}% of the card")
         if facts.get("smallest_pt"):
             print(f"type    {facts['smallest_pt']:.1f}-{facts['largest_pt']:.1f} pt")

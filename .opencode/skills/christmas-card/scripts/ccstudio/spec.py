@@ -1,8 +1,9 @@
-"""cards/<name>/card.json: photographs, words, direction and free compositions.
+"""cards/<name>/card.json: photographs, words, the card's own palette and pages.
 
-There is no layout setting any more. A card holds one or more compositions the
-agent wrote against the rulebook; ``front`` and ``back`` are just compositions
-with a side. ``selected`` picks which front is rendered.
+There is no direction and no preset. A card holds the palette the agent chose
+(or one sampled from the photographs), plus free compositions the agent wrote
+against the rulebook; ``front`` and ``back`` are compositions with a side.
+``selected`` picks which front is rendered.
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import config, layouts
+from . import colour, config, layouts, photos as photo_mod
 
 
 DEFAULT_TEXT = {
@@ -22,10 +23,11 @@ DEFAULT_TEXT = {
 }
 
 DEFAULT_DESIGN = {
-    "direction": "classic",   # a direction is guidance from the rulebook, not a template
-    "palette": "",            # empty = the direction's palette
     "size": "5x7",
     "orientation": "portrait",
+    # system.palette is written by the agent; left empty, the photographs give
+    # the colours and the brief prints them so they can be replaced.
+    "system": {},
     "compositions": [],
     "selected": 0,
 }
@@ -50,6 +52,7 @@ class CardSpec:
     def __init__(self, path: Path, data: dict[str, Any]):
         self.path = Path(path).resolve()
         self.data = data
+        self._palette: config.Palette | None = None
 
     # ---------------------------------------------------------------- loading
     @classmethod
@@ -155,12 +158,35 @@ class CardSpec:
         return resolve(self.folder, slot_photo)
 
     @property
-    def style(self) -> config.Style:
-        return config.style(self.design.get("direction") or self.design.get("style"))
+    def system(self) -> dict[str, Any]:
+        if not isinstance(self.design.get("system"), dict):
+            self.design["system"] = {}
+        return self.design["system"]
 
     @property
     def palette(self) -> config.Palette:
-        return config.palette(self.design.get("palette") or self.style.palette)
+        """The card's own six colours, or a palette sampled from photograph 0."""
+        if self._palette is not None:
+            return self._palette
+        data = self.system.get("palette")
+        if isinstance(data, dict) and all(colour.is_hex(str(data.get(k, ""))) for k in config.PALETTE_KEYS):
+            self._palette = config.palette(data, "yours")
+        else:
+            self._palette = self._sampled_palette()
+        return self._palette
+
+    def _sampled_palette(self) -> config.Palette:
+        for path in self.photo_paths:
+            try:
+                photo = photo_mod.load(path)
+            except photo_mod.PhotoError:
+                continue
+            return config.palette(photo_mod.palette_from(photo), "sampled from " + path.name)
+        return config.palette(None, "none yet")
+
+    def set_system(self, system: dict[str, Any]) -> None:
+        self.design["system"] = system
+        self._palette = None
 
     @property
     def card_inches(self) -> tuple[float, float]:
@@ -191,9 +217,13 @@ def normalise(data: dict[str, Any], path: Path) -> dict[str, Any]:
 
     design = data.get("design") if isinstance(data.get("design"), dict) else {}
     design = {**DEFAULT_DESIGN, **design}
-    # migrate a v1 card: style -> direction, top-level designs -> compositions
-    if "style" in design and not design.get("direction"):
-        design["direction"] = design.pop("style")
+    # A direction or a named palette was a preset; neither exists any more. The
+    # colours now come from the card's own system (or from the photographs).
+    design.pop("direction", None)
+    design.pop("palette", None)
+    if not isinstance(design.get("system"), dict):
+        design["system"] = {}
+    # migrate a v1 card: top-level designs -> compositions
     if isinstance(data.get("designs"), list) and not design.get("compositions"):
         migrated = []
         for i, old in enumerate(data["designs"]):

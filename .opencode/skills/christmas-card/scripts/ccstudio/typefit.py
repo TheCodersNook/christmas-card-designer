@@ -1,8 +1,9 @@
-"""Measured type: wrapping, fitting and drawing inside a reserved zone.
+"""Measured type: wrapping, fitting and drawing a piece of copy in its zone.
 
-Text is never dropped on top of a photograph and never overflows its zone. The
-largest size that fits is found by binary search; if even the smallest readable
-size does not fit, the copy shrinks in the zone and then ellipsises.
+Every zone names its own size, face, weight, tracking and leading; there are no
+named type roles and no house scale. The size the composition asks for is the
+size that is set. If the copy cannot fit even after stepping down to a floor, it
+is ellipsised, and the gate reports it.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 from PIL import ImageDraw, ImageFont
 
 from . import config
+from .colour import contrast, luminance, readable_text  # re-exported for the renderer
 
 # family key -> files. Variable fonts get their weight axis set per use.
 FAMILIES: dict[str, dict] = {
@@ -33,10 +35,7 @@ FAMILIES: dict[str, dict] = {
 }
 
 FONT_CHOICES = [(k, v["label"]) for k, v in FAMILIES.items()]
-
-# Sizes are a fraction of the card's short side (at export resolution).
-# They come from studio/rules.json; edit them there, not here.
-ROLE_SIZES = dict(config.ROLE_SIZES)
+FAMILY_KEYS = tuple(FAMILIES)
 
 CHAR_MAP = {
     "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
@@ -208,6 +207,8 @@ class Block:
     tracking: float
     align: str
     truncated: bool = False
+    requested: float = 0.0      # the size the composition asked for, in px
+    shrunk: bool = False        # stepped down to fit the zone
 
     @property
     def height(self) -> float:
@@ -234,125 +235,58 @@ def _line_height(font: ImageFont.FreeTypeFont, size: float, spacing: float) -> f
     return max(size * spacing, (ascent + descent) * 1.02)
 
 
-def fit(text: str, role: str, family: str, weight: int, italic: bool, uppercase: bool,
-        tracking_em: float, line_spacing: float, width: float, height: float,
-        max_size: float, min_size: float = 0.0, max_lines: int = 8,
-        align: str = "center", book: FontBook | None = None) -> Block:
+def fit(text: str, word: str, family: str, weight: int, italic: bool, uppercase: bool,
+        tracking_em: float, leading: float, width: float, height: float,
+        size: float, align: str = "left", min_scale: float = 0.6,
+        book: FontBook | None = None) -> Block:
+    """Set one piece of copy at the size the composition asked for.
+
+    If it will not fit, it steps down (no smaller than ``min_scale`` of the
+    requested size) and then ellipsises; the gate reports either.
+    """
     book = book or BOOK
     text = clean(text)
     if uppercase:
         text = text.upper()
-    min_size = max(5.0, min_size or max_size * 0.55)
+    size = max(5.0, float(size))
+    floor = max(5.0, size * max(0.2, min(1.0, min_scale)))
     if not text:
-        return Block(role, book.font(family, min_size, weight, italic), int(min_size), [], min_size * line_spacing,
-                     0.0, align)
+        return Block(word, book.font(family, floor, weight, italic), int(round(floor)), [],
+                     floor * leading, 0.0, align, requested=size)
 
-    def build(size: float) -> tuple[ImageFont.FreeTypeFont, list[str], float]:
-        font = book.font(family, size, weight, italic)
-        tracking = tracking_em * size
-        return font, wrap(text, font, width, tracking), tracking
+    def build(at: float) -> tuple[ImageFont.FreeTypeFont, list[str], float]:
+        font = book.font(family, at, weight, italic)
+        tracking = tracking_em * at
+        return font, wrap(text, font, max(8.0, width), tracking), tracking
 
-    lo, hi = min_size, max(6.0, max_size)
-    best: Block | None = None
-    for _ in range(11):
-        mid = (lo + hi) / 2
-        font, lines, tracking = build(mid)
-        lh = _line_height(font, mid, line_spacing)
+    def fits(at: float) -> bool:
+        font, lines, tracking = build(at)
+        lh = _line_height(font, at, leading)
         widest = max((measure(l, font, tracking) for l in lines), default=0.0)
-        if lines and len(lines) <= max_lines and len(lines) * lh <= height + 0.5 and widest <= width + 0.5:
-            best = Block(role, font, int(round(mid)), lines, lh, tracking, align)
-            lo = mid
-        else:
-            hi = mid
-    if best:
-        return best
+        return bool(lines) and len(lines) * lh <= height + 0.5 and widest <= width + 0.5
 
-    font, lines, tracking = build(min_size)
-    lh = _line_height(font, min_size, line_spacing)
+    chosen = size if fits(size) else floor
+    if not fits(size):
+        lo, hi = floor, size
+        for _ in range(12):
+            mid = (lo + hi) / 2
+            if fits(mid):
+                lo = mid
+            else:
+                hi = mid
+        chosen = lo
+    font, lines, tracking = build(chosen)
+    lh = _line_height(font, chosen, leading)
     truncated = False
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        lines[-1] = ellipsise(lines[-1], font, width, tracking)
+    room = max(1, int((height + 0.5) // max(1.0, lh)))
+    if len(lines) > room:
+        lines = lines[:room]
+        lines[-1] = ellipsise(lines[-1], font, max(8.0, width), tracking)
         truncated = True
-    if len(lines) * lh > height and lines:
-        lh = max(6.0, height / len(lines))
-    return Block(role, font, int(min_size), lines, lh, tracking, align, truncated)
-
-
-def fit_stack(roles: list[tuple[str, str]], zones_style: config.Style, width: float, height: float,
-              short: float, scale: float = 1.0, book: FontBook | None = None,
-              font: str = "", align: str = "", caps: bool | None = None) -> list[Block]:
-    """Fit greeting/family/message/... into one zone, shrinking the whole stack together.
-
-    ``font``, ``align`` and ``caps`` come from the composition's zone and override
-    the direction, so the agent can deviate without editing the rulebook.
-    """
-    book = book or BOOK
-    items = [(role, clean(text)) for role, text in roles if clean(text)]
-    if not items or width < 8 or height < 8:
-        return []
-    style = zones_style
-
-    def family_for(role: str) -> str:
-        if font in ("heading", "body", "script"):
-            return getattr(style, font)
-        if role == "greeting":
-            return style.script if style.greeting_font == "script" else (style.heading if style.greeting_font == "heading" else style.body)
-        if role == "family":
-            return style.script if style.name_font == "script" else (style.heading if style.name_font == "heading" else style.body)
-        if role == "signature" and style.name_font == "script":
-            return style.script
-        return style.body
-
-    def italic_for(role: str) -> bool:
-        return role == "signature" and style.name_font != "script" and font != "script"
-
-    def build(k: float) -> list[Block]:
-        blocks = []
-        for role, text in items:
-            rules = config.role_rules(role)
-            size = ROLE_SIZES.get(role, 0.03) * short * scale * k
-            family = family_for(role)
-            tracking_rule = rules.get("tracking", "direction")
-            tracking = style.tracking if tracking_rule == "direction" else float(tracking_rule)
-            upper_rule = rules.get("uppercase", "direction")
-            wants_caps = style.caps if upper_rule == "direction" else bool(upper_rule)
-            if caps is not None:
-                wants_caps = caps
-            # Capitals belong to the roman faces; a script name is never shouted.
-            uppercase = wants_caps and family != style.script
-            weight = style.weight if rules.get("weight", "body") == "heading" else 400
-            spacing = float(rules.get("spacing", 1.42))
-            # Never break a word: cap the size so the longest word fits the zone.
-            display = text.upper() if uppercase else text
-            longest = max(display.split(), key=len, default="")
-            probe = book.font(family, 100, weight, italic_for(role))
-            pw = measure(longest, probe, tracking * 100)
-            if pw > 1:
-                size = min(size, width / pw * 100 * 0.98)
-            lines_cap = int(rules.get("max_lines", 4))
-            chosen = align or style.align
-            chosen = "right" if chosen == "right" else ("left" if chosen == "left" else "center")
-            blocks.append(fit(text, role, family, weight, italic_for(role), uppercase, tracking,
-                              spacing, width, height, size, max(5.0, size * 0.5), lines_cap,
-                              chosen, book=book))
-        return blocks
-
-    for k in (1.0, 0.94, 0.88, 0.82, 0.76, 0.70, 0.64, 0.58, 0.52, 0.46, 0.40):
-        blocks = build(k)
-        gap = max(2.0, min((b.size for b in blocks), default=12) * 0.35)
-        total = sum(b.height for b in blocks) + gap * (len(blocks) - 1)
-        if total <= height:
-            return blocks
-    blocks = build(0.36)
-    gap = max(2.0, min((b.size for b in blocks), default=12) * 0.2)
-    share = max(1.0, (height - gap * max(0, len(blocks) - 1)) / max(1, len(blocks)))
-    out = []
-    for b in blocks:
-        if b.height > share:
-            b.line_height = max(4.0, share / max(1, len(b.lines)))
-        out.append(b)
-    return out
+    if lines and len(lines) * lh > height:
+        lh = max(4.0, height / len(lines))
+    return Block(word, font, int(round(chosen)), lines, lh, tracking, align, truncated,
+                 requested=size, shrunk=chosen < size - 0.5)
 
 
 def draw_block(draw: ImageDraw.ImageDraw, block: Block, box: tuple[float, float, float, float],
@@ -381,32 +315,4 @@ def draw_block(draw: ImageDraw.ImageDraw, block: Block, box: tuple[float, float,
     return (left, top, max(0.0, right - left), max(0.0, min(y + h, top + total) - top))
 
 
-# ------------------------------------------------------------------- contrast
-def _lin(c: float) -> float:
-    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
 
-
-def luminance(hex_color: str) -> float:
-    h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
-
-
-def contrast(a: str, b: str) -> float:
-    la, lb = luminance(a), luminance(b)
-    hi, lo = max(la, lb), min(la, lb)
-    return (hi + 0.05) / (lo + 0.05)
-
-
-def readable_text(bg: str, *candidates: str) -> str:
-    """The first candidate with 4.5:1, else the highest-contrast candidate."""
-    for c in candidates:
-        if contrast(bg, c) >= 4.5:
-            return c
-    return max(candidates, key=lambda c: contrast(bg, c))
-
-
-def measure_text_role(role: str, style: config.Style, short: float) -> int:
-    return int(round(ROLE_SIZES.get(role, 0.03) * short * 1.0))

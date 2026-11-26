@@ -63,18 +63,27 @@ class Slot:
 
 @dataclass
 class Zone:
-    roles: tuple[str, ...]
+    """One piece of copy, set exactly as the composition asks.
+
+    There is no named type scale: the zone carries its own size (a fraction of
+    the page's short side), typeface, weight, tracking and leading.
+    """
+    word: str                      # which copy: greeting, family, message, caption, ...
     x: float
     y: float
     w: float
     h: float
+    size: float = 0.0             # fraction of the short side (0 = not set yet)
+    font: str = "lato"            # a typeface installed in assets/fonts
+    weight: int = 400
+    italic: bool = False
+    tracking: float = 0.0          # em
+    leading: float = 1.2           # multiple of the size
+    caps: bool = False
+    align: str = "left"
+    valign: str = "center"
     panel: str = ""                # "", "panel" or any palette token
-    align: str = ""                # "", left, center, right
-    valign: str = "center"         # top, center, bottom
-    font: str = ""                 # "", heading, body, script
-    scale: float = 1.0             # multiplies the rulebook's role scales
-    caps: bool | None = None       # None = follow the direction
-    text: str = ""                 # overrides words (captions, folios)
+    text: str = ""                 # overrides the card's words (captions, folios)
     layer: int = 0
     rotate: float = 0.0
     color: str = ""                # "", or a palette token / hex
@@ -82,24 +91,39 @@ class Zone:
     panel_opacity: float = 1.0
     panel_pad: float = 0.0         # fraction of the zone's short side
 
+    @property
+    def roles(self) -> tuple[str, ...]:
+        """Compatibility with the reporter: a zone carries exactly one piece."""
+        return (self.word,)
+
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"roles": list(self.roles), "x": r4(self.x), "y": r4(self.y),
-                             "w": r4(self.w), "h": r4(self.h)}
-        if self.panel:
-            d["panel"] = self.panel
-        for key in ("align", "font", "text", "color"):
-            if getattr(self, key):
-                d[key] = getattr(self, key)
+        d: dict[str, Any] = {"word": self.word, "x": r4(self.x), "y": r4(self.y),
+                             "w": r4(self.w), "h": r4(self.h),
+                             "size": round(self.size, 4), "font": self.font}
+        if self.weight != 400:
+            d["weight"] = int(self.weight)
+        if self.italic:
+            d["italic"] = True
+        if abs(self.tracking) > 1e-6:
+            d["tracking"] = round(self.tracking, 4)
+        if abs(self.leading - 1.2) > 1e-6:
+            d["leading"] = round(self.leading, 3)
+        if self.caps:
+            d["caps"] = True
+        if self.align != "left":
+            d["align"] = self.align
         if self.valign != "center":
             d["valign"] = self.valign
-        if abs(self.scale - 1.0) > 1e-6:
-            d["scale"] = round(self.scale, 3)
-        if self.caps is not None:
-            d["caps"] = self.caps
+        if self.panel:
+            d["panel"] = self.panel
+        if self.text:
+            d["text"] = self.text
         if self.layer:
             d["layer"] = self.layer
         if abs(self.rotate) > 1e-6:
             d["rotate"] = round(self.rotate, 2)
+        if self.color:
+            d["color"] = self.color
         if self.over_photo:
             d["over_photo"] = True
         if self.panel_opacity < 0.999:
@@ -118,15 +142,23 @@ class Zone:
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Zone":
+        word = d.get("word")
+        if word is None:
+            legacy = d.get("roles") or []
+            word = legacy[0] if legacy else ""
         return Zone(
-            tuple(str(r) for r in d.get("roles", [])),
+            str(word),
             float(d["x"]), float(d["y"]), float(d["w"]), float(d["h"]),
-            Zone._panel(d.get("panel", False)),
-            str(d.get("align", "")),
+            float(d.get("size", 0.0) or 0.0),
+            str(d.get("font") or "lato"),
+            int(d.get("weight", 400) or 400),
+            bool(d.get("italic", False)),
+            float(d.get("tracking", 0.0) or 0.0),
+            float(d.get("leading", 1.2) or 1.2),
+            bool(d.get("caps", False)),
+            str(d.get("align", "left")),
             str(d.get("valign", "center")),
-            str(d.get("font", "")),
-            float(d.get("scale", 1.0)),
-            bool(d["caps"]) if "caps" in d else None,
+            Zone._panel(d.get("panel", False)),
             str(d.get("text", "")),
             int(d.get("layer", 0) or 0),
             float(d.get("rotate", 0.0) or 0.0),

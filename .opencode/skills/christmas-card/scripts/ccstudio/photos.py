@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 
-from . import faces as faces_mod
+from . import colour, faces as faces_mod
 
 SUPPORTED = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic"}
 
@@ -30,6 +30,7 @@ class Photo:
     brightness: float           # 0..1
     saturation: float           # 0..1
     faces: list = field(default_factory=list)   # faces_mod.Face, fractions of the image
+    colours: list = field(default_factory=list) # [(#hex, pixel count)], most common first
 
     @property
     def aspect(self) -> float:
@@ -78,7 +79,8 @@ def load(path: str | Path) -> Photo:
     key = (str(p.resolve()), p.stat().st_mtime_ns, p.stat().st_size)
     if key not in _FACE_CACHE:
         _FACE_CACHE[key] = faces_mod.detect(img)
-    return Photo(p, img, img.width, img.height, interest, brightness, saturation, _FACE_CACHE[key])
+    return Photo(p, img, img.width, img.height, interest, brightness, saturation,
+                 _FACE_CACHE[key], _colours(img))
 
 
 _FACE_CACHE: dict[tuple, list] = {}
@@ -99,6 +101,56 @@ def _analyse(img: Image.Image) -> tuple[float, float, float]:
     contrast = float(np.clip(lum.std() * 4.0, 0.0, 1.0))
     interest = float(np.clip(0.55 * detail + 0.30 * contrast + 0.15 * saturation, 0.0, 1.0))
     return interest, brightness, saturation
+
+
+def _colours(img: Image.Image, count: int = 10) -> list[tuple[str, int]]:
+    """The photograph's own colours, most common first (no model, no network)."""
+    small = img.copy()
+    small.thumbnail((180, 180), Image.BILINEAR)
+    try:
+        quant = small.quantize(colors=count, method=Image.MEDIANCUT)
+    except Exception:
+        return []
+    palette = quant.getpalette() or []
+    out: list[tuple[str, int]] = []
+    for pixels, index in sorted(quant.getcolors() or [], reverse=True):
+        chunk = palette[index * 3:index * 3 + 3]
+        if len(chunk) < 3:
+            continue
+        out.append((colour.hex_of(tuple(float(v) for v in chunk)), int(pixels)))
+    return out
+
+
+def _saturation(hex_color: str) -> float:
+    r, g, b = colour.rgb_of(hex_color)
+    hi, lo = max(r, g, b), min(r, g, b)
+    return 0.0 if hi <= 0 else (hi - lo) / hi
+
+
+def palette_from(photo: "Photo") -> dict[str, str]:
+    """Build a six-colour palette out of the picture itself.
+
+    Paper is lifted from the most common colour, the accent is the most
+    saturated one, ink is pushed until it is comfortably dark on the paper. It
+    is a starting point the agent may replace with colours of its own.
+    """
+    colours = photo.colours or [("#f4efe4", 1)]
+    total = max(1, sum(n for _, n in colours))
+    bg_src = colours[0][0]
+    bg = bg_src
+    for lift in (0.55, 0.66, 0.76, 0.85, 0.92):
+        bg = colour.mix(bg_src, "#FFFFFF", lift)
+        if colour.luminance(bg) >= 0.80:
+            break
+    accent_src = max(colours, key=lambda kv: _saturation(kv[0]) * 0.7 + (kv[1] / total) * 0.3)[0]
+    accent = colour.mix(accent_src, "#000000", 0.08)
+    if colour.contrast(accent, bg) < 3.0:
+        accent = colour.away_from(accent, bg, 3.0)
+    ink = min(colours, key=lambda kv: colour.luminance(kv[0]))[0]
+    ink = colour.away_from(ink, bg, 9.0)
+    soft = colour.away_from(colour.mix(ink, bg, 0.38), bg, 4.2)
+    return {"bg": bg, "ink": ink, "soft": soft, "accent": accent,
+            "panel": ink, "on_panel": bg}
 
 
 def cover(img: Image.Image, width: int, height: int, focus_x: float = 0.5, focus_y: float = 0.48) -> Image.Image:

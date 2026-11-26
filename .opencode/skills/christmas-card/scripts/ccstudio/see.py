@@ -40,7 +40,7 @@ def annotate(spec: CardSpec, design: layouts.Design, width: int = 1400,
     W, H = art.size
     short = min(W, H)
     label_font = _font(short * 0.017)
-    m = spec.style.margin
+    m = float(config.limit("margin", "safe", 0.045))
     draw.rectangle((m * W, m * H, (1 - m) * W, (1 - m) * H), outline=ACCENT, width=max(1, int(short * 0.002)))
 
     stats = stats or compose.load_photo_stats(spec)
@@ -128,8 +128,10 @@ def visual_md(spec: CardSpec, stats: list[photo_mod.Photo] | None = None) -> str
         lines += ["OpenCV is not installed, so no faces were detected. Run ./ccb faces after installing it.", ""]
     elif not det["model"]:
         lines += ["The YuNet model is not installed; Haar was used if it was available. Run ./ccb faces.", ""]
+    pa = spec.palette
     lines += [
-        f"Direction {spec.style.label}; palette {spec.palette.label}.",
+        f"Palette {pa.label}: bg {pa.bg}, ink {pa.ink}, soft {pa.soft}, accent {pa.accent}, "
+        f"panel {pa.panel}, on_panel {pa.on_panel}.",
         f"Photographs: {len(stats)}. Detector: {det['detector']}.",
         "",
         "## Photographs",
@@ -158,9 +160,10 @@ def visual_md(spec: CardSpec, stats: list[photo_mod.Photo] | None = None) -> str
             lines.append(f"- slot {i + 1}: photo {slot.photo} at "
                          f"x {slot.x:.3f} y {slot.y:.3f} w {slot.w:.3f} h {slot.h:.3f}{face_note}")
         for i, zone in enumerate(design.zones):
-            lines.append(f"- zone {i + 1}: {', '.join(zone.roles)} at "
+            lines.append(f"- zone {i + 1}: {zone.word} at "
                          f"x {zone.x:.3f} y {zone.y:.3f} w {zone.w:.3f} h {zone.h:.3f}; "
-                         f"align {zone.align or spec.style.align}, scale {zone.scale:g}")
+                         f"{zone.size:g} of the short side, {zone.font} {zone.weight}, "
+                         f"tracking {zone.tracking:g} em, leading {zone.leading:g}, align {zone.align}")
         issues = compose.validate_composition(comp, spec, spec.card_inches, stats)
         for issue in issues:
             lines.append(f"- {issue.level.upper()} {issue.code}: {issue.message}")

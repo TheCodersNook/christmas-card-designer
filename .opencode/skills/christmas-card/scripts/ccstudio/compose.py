@@ -1,22 +1,22 @@
 """Compositions: the brief, the rule checks and the installer.
 
-There is no template here. The agent writes a page (a background, colour fields,
-photograph slots, text zones, rules) and this module answers three questions:
-what does the rulebook allow, what is wrong with this composition, and what
-should the agent know before writing one.
+There are no templates and no presets here. A card carries its own palette, and
+every page is a page the agent composed: a background, colour fields, photograph
+slots, text set with a size and face of its own, rules. This module answers three
+questions: what does the rulebook allow, what is wrong with this card, and what
+should the agent know before it starts.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from . import config, faces as faces_mod, layouts, photos as photo_mod
-from .layouts import Design, Slot, Zone, overlaps
+from . import colour, config, faces as faces_mod, layouts, photos as photo_mod, typefit
+from .layouts import Design, overlaps
 from .spec import CardSpec, SpecError
 
-PALETTE_TOKENS = ("bg", "ink", "soft", "accent", "panel", "on_panel")
+PALETTE_TOKENS = config.PALETTE_KEYS
 
 
 @dataclass
@@ -44,7 +44,7 @@ def _colour_ok(value: Any) -> bool:
     if not text:
         return False
     if text.startswith("#"):
-        return len(text) in (4, 7)
+        return colour.is_hex(text)
     return text in PALETTE_TOKENS
 
 
@@ -93,6 +93,54 @@ def _layer_ok(layer: int) -> bool:
     return lo <= layer <= hi
 
 
+def _span(key: str, name: str) -> tuple[float, float]:
+    span = config.TYPE.get(key, {}) or {}
+    return float(span.get("min", -999)), float(span.get("max", 999))
+
+
+# ----------------------------------------------------------------- the system
+def validate_system(system: dict[str, Any] | None) -> list[Issue]:
+    """Check a card's own palette: six hex colours, readable type."""
+    issues: list[Issue] = []
+    if not system:
+        return issues
+    if not isinstance(system, dict):
+        return [Issue("error", "system.shape", "system must be an object with a 'palette'")]
+    data = system.get("palette")
+    if data is None:
+        return issues
+    if not isinstance(data, dict):
+        return [Issue("error", "palette.shape", "palette must be an object of six #hex colours")]
+    missing = [k for k in config.PALETTE_KEYS if not colour.is_hex(str(data.get(k, "")))]
+    if missing:
+        issues.append(Issue("error", "palette.keys",
+                            f"the palette needs {', '.join(config.PALETTE_KEYS)} as #hex values; "
+                            f"missing or invalid: {', '.join(missing)}"))
+        return issues
+    pa = config.palette(data)
+    floor = float(config.PALETTE_RULES.get("min_text_contrast", 4.5))
+    ink = colour.contrast(pa.ink, pa.bg)
+    if ink < 2.5:
+        issues.append(Issue("error", "palette.contrast",
+                            f"ink {pa.ink} on bg {pa.bg} is only {ink:.1f}:1; type would be unreadable"))
+    elif ink < floor:
+        issues.append(Issue("warn", "palette.contrast",
+                            f"ink {pa.ink} on bg {pa.bg} is {ink:.1f}:1 (aim for {floor:g}:1+)"))
+    panel = colour.contrast(pa.on_panel, pa.panel)
+    if panel < 2.5:
+        issues.append(Issue("error", "palette.contrast",
+                            f"on_panel {pa.on_panel} on panel {pa.panel} is only {panel:.1f}:1"))
+    elif panel < floor:
+        issues.append(Issue("warn", "palette.contrast",
+                            f"on_panel {pa.on_panel} on panel {pa.panel} is {panel:.1f}:1 (aim for {floor:g}:1+)"))
+    accent = colour.contrast(pa.accent, pa.bg)
+    if accent < float(config.PALETTE_RULES.get("min_decor_contrast", 1.3)):
+        issues.append(Issue("warn", "palette.contrast",
+                            f"accent {pa.accent} is almost the same as bg {pa.bg} ({accent:.1f}:1); "
+                            "rules and ornaments would vanish"))
+    return issues
+
+
 # ---------------------------------------------------------------------- limits
 def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
                          canvas: tuple[float, float] | None = None,
@@ -106,7 +154,6 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
     if not isinstance(slots, list) or not isinstance(zones, list):
         return [Issue("error", "composition.shape", "slots and zones must be lists", name)]
 
-    style = spec.style if spec else config.style(None)
     card = canvas or (spec.card_inches if spec else (5.0, 7.0))
     count = len(spec.photo_paths) if spec else 99
     if spec is None:
@@ -118,8 +165,12 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
     treatments = [str(v) for v in slot_rules.get("treatments", [])]
     alignments = [str(v) for v in zone_rules.get("alignments", [])]
     valigns = [str(v) for v in zone_rules.get("valigns", [])]
-    clips = [str(v) for v in slot_rules.get("clips", ["rect", "rounded", "arch", "circle", "oval"])]
+    clips = [str(v) for v in slot_rules.get("clips", [])]
     shape_kinds = [str(v) for v in shape_rules.get("kinds", [])]
+    size_min, size_max = _span("sizes", "size")
+    weight_min, weight_max = _span("weights", "weight")
+    track_min, track_max = _span("tracking", "tracking")
+    lead_min, lead_max = _span("leading", "leading")
 
     if len(slots) > int(slot_rules.get("max", 12)):
         issues.append(Issue("error", "slots.count", f"{len(slots)} photographs; the maximum is {slot_rules.get('max')}", name))
@@ -199,7 +250,6 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
             issues.append(Issue("error", "shapes.layer", "layer is outside the allowed range", where))
 
     # ----------------------------------------------------------------- slots
-    seen_photos: list[int] = []
     rects: list[tuple[str, str, int, tuple[float, float, float, float]]] = []
     for i, slot in enumerate(slots):
         where = f"{name} slot {i + 1}"
@@ -214,8 +264,6 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
             index = -1
         if index >= 0 and not (0 <= index < count):
             issues.append(Issue("error", "photo.range", f"photo {index} does not exist (there are {count})", where))
-        if index >= 0:
-            seen_photos.append(index)
         treatment = str(slot.get("treatment", "")).lower()
         if treatment and treatment not in treatments:
             issues.append(Issue("error", "photo.treatment", f"unknown treatment '{treatment}'; use {', '.join(treatments)}", where))
@@ -259,27 +307,41 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
             issues.append(Issue("error", "zone.shape", "a zone is an object", where))
             continue
         rect = _rect(where, zone, issues)
-        roles = [str(r) for r in zone.get("roles", [])]
-        if not roles:
-            issues.append(Issue("error", "type.roles", "a text zone needs at least one role", where))
-        for role in roles:
-            if role not in config.ROLE_RULES:
-                issues.append(Issue("error", "type.role", f"'{role}' is not a role in the rulebook", where))
-        align = str(zone.get("align", "")).lower()
-        if align and align not in alignments:
+        word = str(zone.get("word") or "").lower()
+        text = str(zone.get("text") or "")
+        if not word:
+            issues.append(Issue("error", "type.word", "a zone needs a 'word' (greeting, family, message, ... or any label with 'text')", where))
+        elif word not in config.PARTS and not text:
+            issues.append(Issue("error", "type.word",
+                                f"'{word}' is not one of the rulebook's parts; add 'text' for your own label", where))
+        try:
+            size = float(zone.get("size", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            size = 0.0
+        if size <= 0:
+            issues.append(Issue("error", "type.size", "a zone must set 'size' (a fraction of the short side, e.g. 0.034)", where))
+        elif not (size_min <= size <= size_max):
+            issues.append(Issue("error", "type.size",
+                                f"size {size:g} is outside {size_min:g}..{size_max:g} of the short side", where))
+        font = str(zone.get("font") or config.TYPE.get("default_font", "lato")).lower()
+        if font not in typefit.FAMILIES:
+            issues.append(Issue("error", "type.font",
+                                f"'{font}' is not an installed typeface; use {', '.join(typefit.FAMILIES)}", where))
+        weight = int(_number(zone, "weight", 400))
+        if not (weight_min <= weight <= weight_max):
+            issues.append(Issue("error", "type.weight", f"weight {weight} is outside {weight_min:g}..{weight_max:g}", where))
+        tracking = _number(zone, "tracking", 0.0)
+        if not (track_min <= tracking <= track_max):
+            issues.append(Issue("error", "type.tracking", f"tracking {tracking:g} em is outside {track_min:g}..{track_max:g}", where))
+        leading = _number(zone, "leading", 1.2)
+        if not (lead_min <= leading <= lead_max):
+            issues.append(Issue("error", "type.leading", f"leading {leading:g} is outside {lead_min:g}..{lead_max:g}", where))
+        align = str(zone.get("align", "left")).lower()
+        if align not in alignments:
             issues.append(Issue("error", "type.align", f"align must be one of {', '.join(alignments)}", where))
         valign = str(zone.get("valign", "center")).lower()
         if valign not in valigns:
             issues.append(Issue("error", "type.valign", f"valign must be one of {', '.join(valigns)}", where))
-        font = str(zone.get("font", "")).lower()
-        if font and font not in ("heading", "body", "script"):
-            issues.append(Issue("error", "type.font", "font must be heading, body or script", where))
-        try:
-            scale = float(zone.get("scale", 1.0))
-        except (TypeError, ValueError):
-            scale = 1.0
-        if not (0.35 <= scale <= 2.2):
-            issues.append(Issue("error", "type.scale", "scale must be between 0.35 and 2.2", where))
         color = zone.get("color")
         if color and not _colour_ok(color):
             issues.append(Issue("error", "type.color", "color must be a palette token or #hex", where))
@@ -301,12 +363,13 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
                 issues.append(Issue("warn", "type.narrow", "a text zone this narrow will break words", where))
             if rect[2] * rect[3] < float(zone_rules.get("min_area", 0.006)):
                 issues.append(Issue("warn", "type.small", "the text zone is very small for its copy", where))
-            m = style.margin / 2
+            safe = float(config.limit("margin", "safe", 0.045)) / 2
             if spec is not None and not zone.get("over_photo") and not panel and (
-                    rect[0] < m or rect[1] < m or
-                    rect[0] + rect[2] > 1 - m or rect[1] + rect[3] > 1 - m):
+                    rect[0] < safe or rect[1] < safe or
+                    rect[0] + rect[2] > 1 - safe or rect[1] + rect[3] > 1 - safe):
                 issues.append(Issue("warn", "type.margin",
-                                    f"text runs inside the page's safe area ({m:.3f}); the direction prefers {style.margin:.3f}", where))
+                                    f"text runs inside the page's safe area ({safe:.3f}); "
+                                    f"the rulebook suggests {safe * 2:.3f}", where))
             rects.append(("zone", where, layer, rect))
             if zone.get("over_photo"):
                 over_photo_zones.append((where, rect))
@@ -339,12 +402,13 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
             issues.append(Issue("warn", "type.over_photo",
                                 "over_photo is set but no photograph is underneath", where))
 
-    known_roles = {str(r) for z in zones if isinstance(z, dict) for r in z.get("roles", [])}
     if spec is not None:
-        for role in known_roles:
-            if not str(spec.text.get(role, "")).strip() and not any(
-                    isinstance(z, dict) and z.get("text") and role in z.get("roles", []) for z in zones):
-                issues.append(Issue("warn", "words.empty", f"role '{role}' is placed but has no words", name))
+        for zone in zones:
+            if not isinstance(zone, dict):
+                continue
+            word = str(zone.get("word") or "").lower()
+            if word and not str(spec.text.get(word, "")).strip() and not str(zone.get("text") or "").strip():
+                issues.append(Issue("warn", "words.empty", f"'{word}' is placed but has no words", name))
 
     # ------------------------------------------------------ ornament & rules
     ornaments = comp.get("ornaments") or []
@@ -374,7 +438,8 @@ def validate_composition(comp: dict[str, Any], spec: CardSpec | None = None,
                 issues.append(Issue("error", "lines.value", f"{key} is outside 0..1", where))
         token = str(line.get("token", "accent"))
         if token not in [str(v) for v in config.COMPOSE.get("lines", {}).get("tokens", [])]:
-            token = {"ink": "ink", "soft": "soft", "accent": "accent"}.get(token, "accent")
+            issues.append(Issue("error", "lines.token",
+                                f"'{token}' is not a palette token; use {', '.join(map(str, config.COMPOSE.get('lines', {}).get('tokens', [])))}", where))
         try:
             weight = float(line.get("weight", 1.0))
         except (TypeError, ValueError):
@@ -461,6 +526,7 @@ def _is_plain(comp: dict[str, Any]) -> bool:
 
 def validate_card(spec: CardSpec) -> list[Issue]:
     issues: list[Issue] = []
+    issues.extend(validate_system(spec.system))
     stats = load_photo_stats(spec)
     if not spec.compositions:
         issues.append(Issue("error", "composition.none", "no composition yet: write one with ./ccb brief, then ./ccb layout"))
@@ -501,6 +567,14 @@ def validate_card(spec: CardSpec) -> list[Issue]:
 
 
 # ------------------------------------------------------------------ installing
+def split_payload(payload: Any) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """A layout file is {system?, compositions|slides|front/back} or a list of pages."""
+    system = None
+    if isinstance(payload, dict) and isinstance(payload.get("system"), dict):
+        system = dict(payload["system"])
+    return system, normalise_payload(payload)
+
+
 def normalise_payload(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         if "compositions" in payload and isinstance(payload["compositions"], list):
@@ -543,13 +617,24 @@ def normalise_payload(payload: Any) -> list[dict[str, Any]]:
 
 
 def install(spec: CardSpec, payload: Any, select: int | None = None, append: bool = False) -> tuple[list[Issue], int]:
-    comps = normalise_payload(payload)
+    system, comps = split_payload(payload)
     stats = load_photo_stats(spec)
     issues: list[Issue] = []
+    if system is not None:
+        issues.extend(validate_system(system))
+        palette = system.get("palette")
+        if isinstance(palette, dict):
+            for key, value, where in (
+                    ("accent", palette.get("accent"), "accent"),
+                    ("bg", palette.get("bg"), "bg")):
+                if value and not colour.is_hex(str(value)):
+                    issues.append(Issue("error", "palette.keys", f"{where} must be a #hex colour", "system"))
     for comp in comps:
         issues.extend(validate_composition(comp, spec, spec.card_inches, stats))
     if any(i.level == "error" for i in issues):
         return issues, 0
+    if system is not None:
+        spec.set_system(system)
     if append:
         spec.compositions.extend(comps)
     else:
@@ -566,52 +651,75 @@ def install(spec: CardSpec, payload: Any, select: int | None = None, append: boo
 def rule_digest() -> str:
     comp = config.COMPOSE
     sizes = ", ".join(f"{k} ({v[0]:g}x{v[1]:g} in)" for k, v in config.SIZES.items())
-    roles = ", ".join(f"{k} {v.get('scale', 0):g}" for k, v in config.ROLE_RULES.items())
+    faces = ", ".join(f"{k} ({v['label']})" for k, v in typefit.FAMILIES.items())
+    size_min, size_max = _span("sizes", "size")
+    weight_min, weight_max = _span("weights", "weight")
+    track_min, track_max = _span("tracking", "tracking")
+    lead_min, lead_max = _span("leading", "leading")
+    parts = ", ".join(config.PARTS)
     shapes = comp.get("shapes", {})
     chrome = comp.get("chrome", {})
     return "\n".join([
         f"paper        {sizes}",
-        f"bleed        {config.BLEED_IN} in, export dpi 96-{config.MAX_DPI}",
-        f"margins      {comp.get('margin', {}).get('recommended_min', 0.045)}-{comp.get('margin', {}).get('recommended_max', 0.12)} (each direction has its own; advice, not a cage)",
+        f"bleed        {config.BLEED_IN} in, export dpi {config.MIN_DPI}-{config.MAX_DPI}",
+        f"margins      keep words about {comp.get('margin', {}).get('safe', 0.045) / 2:.3f} inside every edge; advice, not a cage",
+        f"palette      six colours of your own: {', '.join(config.PALETTE_KEYS)} (#hex); ink on bg and on_panel on panel at "
+        f"{config.PALETTE_RULES.get('min_text_contrast', 4.5)}:1+",
+        f"typefaces    {faces}",
+        f"type         size {size_min:g}-{size_max:g} of the short side per zone (no named scale); weight {weight_min:g}-{weight_max:g}; "
+        f"tracking {track_min:g}-{track_max:g} em; leading {lead_min:g}-{lead_max:g}; caps, italic, align and valign are yours",
+        f"copy parts   {parts}  (any other word works when the zone carries its own 'text')",
         f"background   photo (with scrim 0-1), fill, or gradient [a, b]; the whole page, bleed included",
-        f"shapes       {', '.join(shapes.get('kinds', []))} (max {shapes.get('max', 16)}); fill from the palette or #hex, opacity 0-1, rotate ±180",
-        f"photographs  {comp.get('photos', {}).get('min_coverage', 0.2)}-{comp.get('photos', {}).get('max_coverage', 0.84)} of the page, max {comp.get('slots', {}).get('max', 12)} slots; clip {', '.join(comp.get('slots', {}).get('clips', []))}; rotate ±{comp.get('slots', {}).get('max_rotate', 12)}°; 'bleed' runs into the bleed",
+        f"shapes       {', '.join(shapes.get('kinds', []))} (max {shapes.get('max', 16)}); fill from the palette or #hex, opacity 0-1, rotate +-180",
+        f"photographs  {comp.get('photos', {}).get('min_coverage', 0.2)}-{comp.get('photos', {}).get('max_coverage', 0.84)} of the page, max {comp.get('slots', {}).get('max', 12)} slots; clip {', '.join(comp.get('slots', {}).get('clips', []))}; rotate +-{comp.get('slots', {}).get('max_rotate', 12)} deg; 'bleed' runs into the bleed",
         f"treatments   {', '.join(comp.get('slots', {}).get('treatments', []))}",
-        f"text zones   max {comp.get('zones', {}).get('max', 10)}; align {', '.join(comp.get('zones', {}).get('alignments', []))}; valign {', '.join(comp.get('zones', {}).get('valigns', []))}; rotate ±{comp.get('zones', {}).get('max_rotate', 90)}°",
+        f"text zones   max {comp.get('zones', {}).get('max', 10)}; align {', '.join(comp.get('zones', {}).get('alignments', []))}; valign {', '.join(comp.get('zones', {}).get('valigns', []))}; rotate +-{comp.get('zones', {}).get('max_rotate', 90)} deg",
         f"over photos  a zone with 'over_photo': true may sit on a picture; the engine colours it for contrast",
         f"layers       {comp.get('layers', {}).get('min', -5)}..{comp.get('layers', {}).get('max', 5)} on slots, zones, shapes and rules; overlapping photographs need different layers",
         f"ornaments    {', '.join(comp.get('ornaments', {}).get('kinds', []))} (max {comp.get('ornaments', {}).get('max', 4)}); nothing is drawn unless you ask",
         f"chrome       border {', '.join(chrome.get('borders', []))}; texture true/false; also optional decoration + density",
         f"rules/lines  max {comp.get('lines', {}).get('max', 8)}; tokens {', '.join(comp.get('lines', {}).get('tokens', []))}",
         f"faces        keep {comp.get('faces', {}).get('min_crop_keep', 0.65):.0%} of every face; print at least {comp.get('faces', {}).get('min_width_in', 0.16)} in wide",
-        f"type roles   {roles}   (fractions of the short side)",
+        f"type floor   nothing below {comp.get('type_safety', {}).get('min_pt', 7.0)} pt in print",
     ])
+
+
+def _palette_block(spec: CardSpec, stats: list[photo_mod.Photo]) -> list[str]:
+    pa = spec.palette
+    lines = [
+        f"Palette      {pa.label}",
+        f"             bg {pa.bg}   ink {pa.ink}   soft {pa.soft}",
+        f"             accent {pa.accent}   panel {pa.panel}   on_panel {pa.on_panel}",
+    ]
+    if not spec.system.get("palette"):
+        lines.append("             (sampled from the photographs - replace it with colours of your own in 'system')")
+    lines.append("")
+    lines.append("Colours in your photographs (most common first):")
+    for i, photo in enumerate(stats[:4]):
+        swatches = "  ".join(c for c, _ in photo.colours[:6])
+        lines.append(f"  [{i}] {photo.path.name}: {swatches}")
+    return lines
 
 
 def brief(spec: CardSpec) -> str:
     w, h = spec.card_inches
     dpi = int(spec.export.get("dpi", 300) or 300)
-    style = spec.style
+    stats = load_photo_stats(spec)
     lines = [
         f"# Design brief: {spec.name}",
         "",
         f"Canvas       {w:g} x {h:g} in ({w * dpi:.0f} x {h * dpi:.0f} px at {dpi} dpi)",
-        f"Direction    {style.label} - {style.blurb}",
-        f"             {style.guidance}",
-        f"Palette      {spec.palette.label}  bg {spec.palette.bg}  ink {spec.palette.ink}  accent {spec.palette.accent}  panel {spec.palette.panel}",
-        f"Type         {style.heading} / {style.body} / {style.script}; align {style.align}; margin {style.margin:g}; caps {style.caps}",
+        *_palette_block(spec, stats),
         "",
-        "The direction is a starting point, not a style sheet. The engine paints",
+        "There is no template and no style to pick. You choose the colours, the",
+        "typefaces, the sizes and the composition of every page. The engine paints",
         "only what you declare: no frame, no decoration, no texture unless asked.",
-        "Every page should be composed from scratch, and two fronts should not",
-        "share a skeleton.",
         "",
         "## The rulebook",
         rule_digest(),
         "",
         "## Photographs",
     ]
-    stats = load_photo_stats(spec)
     for i, path in enumerate(spec.photo_paths):
         photo = stats[i] if i < len(stats) else None
         if photo is None:
@@ -625,27 +733,27 @@ def brief(spec: CardSpec) -> str:
         lines.append("  faces: OpenCV is not installed, so crops are centred rather than face-aware")
     elif not det["model"]:
         lines.append("  faces: run ./ccb faces to install the YuNet model (Haar is the fallback)")
+    lines += ["", "## Words"]
+    for word in config.TEXT_PARTS:
+        lines.append(f"  {word:<10} {spec.text.get(word) or '(empty)'}")
     lines += [
         "",
-        "## Words",
-    ]
-    for role in config.TEXT_ROLES:
-        lines.append(f"  {role:<10} {spec.text.get(role) or '(empty)'}")
-    lines += [
+        "## The parts you can set",
         "",
-        "## Directions you may borrow from",
     ]
-    for key, st in config.STYLES.items():
-        lines.append(f"  {key:<12} {st.label}: {st.guidance}")
+    for part, description in config.PARTS.items():
+        lines.append(f"  {part:<10} {description}")
     lines += [
         "",
         "## The vocabulary (one page)",
         "",
+        "  system      {palette: {bg, ink, soft, accent, panel, on_panel}}   #hex, yours",
         "  background  {photo, scrim, scrim_from, scrim_reach, scrim_color} | {fill} | {gradient: [a, b], angle}",
         "  shapes      {kind, x, y, w, h, fill, opacity, rotate, layer, radius}",
         "  slots       {photo, x, y, w, h, treatment, focus, clip, rotate, layer, bleed}",
-        "  zones       {roles, x, y, w, h, align, valign, font, scale, caps, text,",
-        "               panel, panel_opacity, panel_pad, color, rotate, layer, over_photo}",
+        "  zones       {word, x, y, w, h, size, font, weight, italic, tracking, leading,",
+        "               caps, align, valign, text, panel, panel_opacity, panel_pad,",
+        "               color, rotate, layer, over_photo}",
         "  lines       {x1, y1, x2, y2, token, weight, layer}",
         "  ornaments   {kind, density}",
         "  chrome      {border, decoration, density, texture}   (all off by default)",
@@ -657,29 +765,35 @@ def brief(spec: CardSpec) -> str:
         "  - a colour field (shape 'band' or 'rect') that the photograph sits on or",
         "    breaks out of;",
         "  - an arch-, circle- or oval-clipped portrait against flat paper;",
-        "  - two or three snapshots overlapping on different layers, tilted 2-4°;",
+        "  - two or three snapshots overlapping on different layers, tilted 2-4 deg;",
         "  - a rotated spine of type down one edge;",
+        "  - one display line at 0.12 of the short side against 0.021 captions: the",
+        "    hierarchy is yours to choose, there is no scale to obey;",
         "  - a panel of colour behind a short line, or a single heavy rule.",
         "",
         "## What to write",
-        "Write 2-3 fronts and one back. Each is one page you have composed: name it",
-        "after the idea. Coordinates are fractions from the top-left; photographs",
-        "never stretch (the engine crops around the faces unless a slot sets focus).",
+        "Write 2-3 fronts and one back. Each is one page you composed: name it after",
+        "the idea. Coordinates are fractions from the top-left; photographs never",
+        "stretch (the engine crops around the faces unless a slot sets focus).",
         "",
         "Everything is checked by ./ccb layout; errors stop the save, warnings are",
         "notes. Then ./ccb check, ./ccb see, ./ccb render, ./ccb qa.",
         "",
         "## Shape of the file",
         json.dumps({
-            "front": {
-                "name": "your name", "side": "front",
-                "background": {"photo": 0, "scrim": 0.45, "scrim_from": "bottom"},
-                "shapes": [{"kind": "band", "x": 0, "y": 0.72, "w": 1, "h": 0.28,
-                            "fill": "panel", "opacity": 0.9}],
-                "slots": [], "zones": [], "ornaments": [], "lines": [],
-            },
-            "back": {"name": "back", "side": "back", "slots": [], "zones": [],
-                     "ornaments": [], "lines": [], "chrome": {"border": "none"}},
+            "system": {"palette": {"bg": "#F6F0E4", "ink": "#20291F", "soft": "#5C6657",
+                                   "accent": "#8C1F26", "panel": "#20291F", "on_panel": "#F6F0E4"}},
+            "compositions": [{
+                "name": "Full bleed", "side": "front",
+                "background": {"photo": 0, "scrim": 0.55, "scrim_from": "bottom", "scrim_reach": 0.58},
+                "zones": [{"word": "greeting", "x": 0.07, "y": 0.60, "w": 0.72, "h": 0.14,
+                           "size": 0.095, "font": "playfair", "weight": 600, "tracking": -0.012,
+                           "leading": 1.05, "align": "left", "over_photo": True},
+                          {"word": "family", "x": 0.07, "y": 0.755, "w": 0.6, "h": 0.05,
+                           "size": 0.030, "font": "lato", "weight": 400, "tracking": 0.08,
+                           "leading": 1.3, "align": "left", "over_photo": True}],
+                "slots": [], "ornaments": [], "lines": [],
+            }],
         }, indent=2),
     ]
     return "\n".join(lines)

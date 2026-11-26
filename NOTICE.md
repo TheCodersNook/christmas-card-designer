@@ -10,5 +10,5 @@
   (BSD-3-Clause) and ReportLab (BSD-3-Clause).
 - **OpenCode** is a separate tool (https://opencode.ai) and is not bundled.
 
-The card engine, the layouts, the styles and the documentation in this project
+The card engine, the compositions and the documentation in this project
 are original work, shared to be used and changed.

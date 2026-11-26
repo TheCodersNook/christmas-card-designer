@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas as pdfcanvas
 
-from . import compose, config, render, typefit
+from . import colour, compose, config, photos as photo_mod, render, typefit
 from .layouts import Design
 from .spec import SpecError, resolve, safe_name, unique_card_dir
 
@@ -30,11 +30,10 @@ DEFAULT_TEXT = {
     "signature": "",
     "year": "",
 }
-DECK_TEXT_ROLES = ("title", "subtitle", "greeting", "message", "signature", "year")
+DECK_TEXT_ROLES = config.DECK_TEXT_PARTS
 
 DEFAULT_DESIGN = {
-    "direction": "editorial",
-    "palette": "brass",
+    "system": {},
     "compositions": [],
 }
 DEFAULT_EXPORT = {"format": "pdf", "dpi": 150, "png": False}
@@ -46,6 +45,9 @@ SLIDE_IN = config.CANVAS_16X9
 class DeckSpec:
     path: Path
     data: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        self._palette: config.Palette | None = None
 
     # ------------------------------------------------------------------ load
     @classmethod
@@ -117,12 +119,34 @@ class DeckSpec:
         return paths[max(0, min(len(paths) - 1, index))]
 
     @property
-    def style(self) -> config.Style:
-        return config.style(self.design.get("direction"))
+    def system(self) -> dict[str, Any]:
+        if not isinstance(self.design.get("system"), dict):
+            self.design["system"] = {}
+        return self.design["system"]
 
     @property
     def palette(self) -> config.Palette:
-        return config.palette(self.design.get("palette") or self.style.palette)
+        if self._palette is not None:
+            return self._palette
+        data = self.system.get("palette")
+        if isinstance(data, dict) and all(colour.is_hex(str(data.get(k, ""))) for k in config.PALETTE_KEYS):
+            self._palette = config.palette(data, "yours")
+        else:
+            self._palette = self._sampled_palette()
+        return self._palette
+
+    def _sampled_palette(self) -> config.Palette:
+        for path in self.photo_paths:
+            try:
+                photo = photo_mod.load(path)
+            except photo_mod.PhotoError:
+                continue
+            return config.palette(photo_mod.palette_from(photo), "sampled from " + path.name)
+        return config.palette(None, "none yet")
+
+    def set_system(self, system: dict[str, Any]) -> None:
+        self.design["system"] = system
+        self._palette = None
 
     @property
     def card_inches(self) -> tuple[float, float]:
@@ -143,8 +167,10 @@ def normalise(data: dict[str, Any], path: Path) -> dict[str, Any]:
     if isinstance(design.get("slides"), list) and not design.get("compositions"):
         design["compositions"] = design.pop("slides")
     design.pop("slides", None)
-    if "style" in design and not design.get("direction"):
-        design["direction"] = design.pop("style")
+    design.pop("direction", None)
+    design.pop("palette", None)
+    if not isinstance(design.get("system"), dict):
+        design["system"] = {}
     data["design"] = design
     if not isinstance(design.get("compositions"), list):
         design["compositions"] = []
@@ -163,7 +189,6 @@ class _View:
 
     def __init__(self, spec: DeckSpec, page: int):
         self.card_inches = SLIDE_IN
-        self.style = spec.style
         self.palette = spec.palette
         self.photo_paths = spec.photo_paths
         self.text = spec.text
@@ -176,14 +201,18 @@ def render_slide(spec: DeckSpec, comp: dict[str, Any], dpi: int, page: int = 1) 
 
 
 def install(spec: DeckSpec, payload: Any, append: bool = False) -> tuple[list[compose.Issue], int]:
-    comps = compose.normalise_payload(payload)
+    system, comps = compose.split_payload(payload)
     stats = compose.load_photo_stats(spec)  # type: ignore[arg-type]
     issues: list[compose.Issue] = []
+    if system is not None:
+        issues.extend(compose.validate_system(system))
     for i, comp in enumerate(comps):
         comp.pop("side", None)
         issues.extend(compose.validate_composition(comp, spec, SLIDE_IN, stats))  # type: ignore[arg-type]
     if any(i.level == "error" for i in issues):
         return issues, 0
+    if system is not None:
+        spec.set_system(system)
     if append:
         spec.compositions.extend(comps)
     else:
@@ -198,9 +227,8 @@ def brief(spec: DeckSpec) -> str:
         f"# Presentation brief: {spec.name}",
         "",
         f"Canvas       13.333 x 7.5 in (16:9), {dpi} dpi = 2000 x 1125 px; no bleed, no crop marks",
-        f"Direction    {spec.style.label} - {spec.style.blurb}",
-        f"             {spec.style.guidance}",
-        f"Palette      {spec.palette.label}  bg {spec.palette.bg}  ink {spec.palette.ink}  accent {spec.palette.accent}  panel {spec.palette.panel}",
+        f"Palette      {spec.palette.label}  bg {spec.palette.bg}  ink {spec.palette.ink}  "
+        f"soft {spec.palette.soft}  accent {spec.palette.accent}  panel {spec.palette.panel}",
         "",
         "## The rulebook",
         compose.rule_digest(),
@@ -216,8 +244,11 @@ def brief(spec: DeckSpec) -> str:
         lines.append(f"  [{i}] {path.name}  {photo.width}x{photo.height}  {photo.orientation}  "
                      f"interest {photo.interest:.2f}  {len(photo.faces)} face(s)")
     lines += ["", "## Words"]
-    for role in DECK_TEXT_ROLES:
-        lines.append(f"  {role:<10} {spec.text.get(role) or '(empty)'}")
+    for word in DECK_TEXT_ROLES:
+        lines.append(f"  {word:<10} {spec.text.get(word) or '(empty)'}")
+    lines += ["", "## Parts you can set (any other word works with its own 'text')"]
+    for part, description in config.PARTS.items():
+        lines.append(f"  {part:<10} {description}")
     lines += [
         "",
         "## What to write",
@@ -228,6 +259,7 @@ def brief(spec: DeckSpec) -> str:
         "photograph, a statement, a gallery for the rest and a closing - that is advice.",
         "Every photograph should appear once; no more than six in one gallery.",
         "Each slide is {name, background, shapes, slots, zones, ornaments, lines, chrome};",
+        "every zone sets its own 'size', 'font', 'weight', 'tracking' and 'leading';",
         "use a zone's 'text' field for captions and page numbers. A full-bleed photograph",
         "behind a scrim, with the title on it ('over_photo': true), is the strongest cover.",
         "Coordinates are fractions of the 16:9 page; faces are kept whole by the",
@@ -295,7 +327,6 @@ def check(spec: DeckSpec, comps: list[dict[str, Any]] | None = None, dpi: int = 
         "slides": len(comps),
         "photos": len(spec.photo_paths),
         "canvas_in": list(SLIDE_IN),
-        "style": spec.style.label,
         "palette": spec.palette.label,
         "dpi": dpi,
     })
@@ -308,7 +339,7 @@ def print_report(report: dict[str, Any]) -> bool:
         print(f"deck    {facts.get('slides')} slides, {facts.get('photos')} photographs")
         print(f"screen  {facts.get('canvas_in', ['?', '?'])[0]:g} x {facts.get('canvas_in', ['?', '?'])[1]:g} in (16:9), "
               f"{facts.get('dpi')} DPI")
-        print(f"theme   {facts.get('style')} / {facts.get('palette')}")
+        print(f"palette {facts.get('palette')}")
         if facts.get("smallest_pt"):
             print(f"type    {facts['smallest_pt']:.1f}-{facts['largest_pt']:.1f} pt")
     for warning in dict.fromkeys(report.get("warnings", [])):
@@ -404,7 +435,7 @@ def qa(spec: DeckSpec, dpi: int = 150) -> tuple[bool, str]:
     lines = [f"# QA: {spec.name} presentation", "",
              f"{'PASS' if ok else 'FAIL'} - {len(comps)} slides, {dpi} DPI", "",
              f"- slides: {len(comps)}",
-             f"- direction: {spec.style.label} / {spec.palette.label}",
+             f"- palette: {spec.palette.label}",
              f"- dpi: {dpi}"]
     for error in dict.fromkeys(report["errors"] + problems):
         lines.append(f"- ERROR {error}")
@@ -454,7 +485,7 @@ def write_report(spec: DeckSpec) -> Path:
     stats = compose.load_photo_stats(spec)  # type: ignore[arg-type]
     lines = [f"# {spec.name} - presentation", "",
              f"{len(spec.photo_paths)} photographs, {len(spec.compositions)} slides, "
-             f"{spec.style.label} / {spec.palette.label}.", ""]
+             f"palette {spec.palette.label}.", ""]
     for i, comp in enumerate(spec.compositions):
         design = compose.design(comp)
         lines.append(f"## {i + 1}. {design.label}")

@@ -14,7 +14,7 @@ contrast against what is actually underneath it.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -232,9 +232,9 @@ def _mask_for(size: tuple[int, int], clip: str, radius_px: float = 0.0) -> Image
     return mask
 
 
-def paint_slot(canvas: Image.Image, spec: CardSpec, slot: layouts.Slot, style: config.Style,
+def paint_slot(canvas: Image.Image, spec: CardSpec, slot: layouts.Slot,
                palette: config.Palette, trim_w: int, trim_h: int, short: int,
-               ox: int, oy: int, bleed_px: int) -> list[int] | None:
+               ox: int, oy: int, bleed_px: int, radius_frac: float = 0.03) -> list[int] | None:
     photo = _photo(spec, slot.photo, {})
     x = ox + slot.x * trim_w
     y = oy + slot.y * trim_h
@@ -257,7 +257,7 @@ def paint_slot(canvas: Image.Image, spec: CardSpec, slot: layouts.Slot, style: c
     fx, fy = slot.focus if slot.focus else photo.face_focus
     tile = photo_mod.cover(photo.image, w, h, focus_x=fx, focus_y=fy)
     treatment = (slot.treatment or "plain").lower()
-    radius = style.radius * short if style.radius > 0 else min(w, h) * 0.03
+    radius = max(0.0, radius_frac) * short
     frame_w = max(1, int(round(short * 0.0022))) if treatment == "border" else 0
     if treatment == "shadow":
         tile = photo_mod.shadowed(tile, spread=max(2, int(short * 0.008)), opacity=52)
@@ -328,25 +328,23 @@ def paint_line(canvas: Image.Image, line: dict[str, Any], palette: config.Palett
 # ---------------------------------------------------------------------- zones
 def paint_zone(canvas: Image.Image, zone: layouts.Zone, spec: CardSpec,
                trim_w: int, trim_h: int, short: int, palette: config.Palette,
-               style: config.Style, dpi: int, ox: int, oy: int) -> list[dict[str, Any]]:
+               dpi: int, ox: int, oy: int) -> list[dict[str, Any]]:
     x, y = ox + zone.x * trim_w, oy + zone.y * trim_h
     w, h = zone.w * trim_w, zone.h * trim_h
     if w < 8 or h < 8:
         return []
-    text = spec.text
-    items = [(role, zone.text or text.get(role, "")) for role in zone.roles]
-    items = [(r, t) for r, t in items if typefit.clean(t)]
-    if not items:
+    text = zone.text or spec.text.get(zone.word, "")
+    if not typefit.clean(text):
         return []
-    pad = short * 0.012 + zone.panel_pad * min(w, h)
-    inner_w, inner_h = w - 2 * pad, h - 2 * pad
-    blocks = typefit.fit_stack(items, style, inner_w, inner_h, short,
-                              scale=max(0.35, min(2.2, zone.scale)),
-                              book=typefit.BOOK, font=zone.font, align=zone.align,
-                              caps=zone.caps)
-    if not blocks:
+    size_px = max(4.0, float(zone.size) * short)
+    pad = short * 0.006 + float(zone.panel_pad) * min(w, h)
+    inner_w = max(6.0, w - 2 * pad)
+    inner_h = max(6.0, h - 2 * pad)
+    block = typefit.fit(text, zone.word, zone.font, zone.weight, zone.italic, zone.caps,
+                        zone.tracking, zone.leading, inner_w, inner_h, size_px,
+                        align=zone.align or "left", book=typefit.BOOK)
+    if not block.lines:
         return []
-    panel_hex = ""
     if zone.panel:
         panel_hex = _color(palette, zone.panel)
         overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
@@ -360,7 +358,7 @@ def paint_zone(canvas: Image.Image, zone: layouts.Zone, spec: CardSpec,
     else:
         bg_hex = _sample_bg(canvas, (x, y, w, h))
         color = readable_zone_color(bg_hex, zone, palette, on_panel=False)
-    total = sum(b.height for b in blocks)
+    total = block.height
     free = max(0.0, inner_h - total)
     if zone.valign == "top":
         top = pad
@@ -368,32 +366,22 @@ def paint_zone(canvas: Image.Image, zone: layouts.Zone, spec: CardSpec,
         top = h - pad - total
     else:
         top = pad + free / 2
-    minimum_gap = max(2.0, (min((b.size for b in blocks), default=12)) * 0.30)
-    if len(blocks) > 1 and free > minimum_gap * (len(blocks) - 1) * 1.8:
-        gap = min(free / (len(blocks) - 1), short * 0.05)
-    else:
-        gap = minimum_gap
-    align = "right" if (zone.align or style.align) == "right" else (
-        "left" if (zone.align or style.align) == "left" else "center")
-    if zone.valign == "bottom":
-        align = zone.align or style.align
-        align = "right" if align == "right" else ("left" if align == "left" else "center")
+    align = "right" if zone.align == "right" else ("left" if zone.align == "left" else "center")
 
     out: list[dict[str, Any]] = []
     rotate = float(zone.rotate or 0.0)
     if abs(rotate) > 0.01:
-        margin = int(short * 0.035)
+        margin = int(short * 0.04)
         layer = Image.new("RGBA", (int(w) + margin * 2, int(h) + margin * 2), (0, 0, 0, 0))
         draw = ImageDraw.Draw(layer)
-        _draw_stack(draw, blocks, margin, margin, w, h, pad, top, gap, color, align, out,
-                    zone, dpi, bg_hex, palette)
+        _place_block(draw, block, margin, margin, w, h, pad, top, color, align, out,
+                     zone, dpi, bg_hex)
         layer = layer.rotate(-rotate, expand=True, resample=Image.BICUBIC)
         _paste_layer(canvas, layer, (int(x + w / 2 - layer.width / 2),
                                      int(y + h / 2 - layer.height / 2)))
         return out
     draw = ImageDraw.Draw(canvas)
-    _draw_stack(draw, blocks, x, y, w, h, pad, top, gap, color, align, out,
-                zone, dpi, bg_hex, palette)
+    _place_block(draw, block, x, y, w, h, pad, top, color, align, out, zone, dpi, bg_hex)
     return out
 
 
@@ -406,28 +394,31 @@ def readable_zone_color(bg_hex: str, zone: layouts.Zone, palette: config.Palette
     return typefit.readable_text(bg_hex, palette.ink, palette.soft, "#FFFFFF", "#111111")
 
 
-def _draw_stack(draw: ImageDraw.ImageDraw, blocks, x: float, y: float, w: float, h: float,
-                pad: float, top: float, gap: float, color: str, align: str,
-                out: list[dict[str, Any]], zone: layouts.Zone, dpi: int,
-                bg_hex: str, palette: config.Palette) -> None:
-    cursor = y + top
-    for block in blocks:
-        box = (x + pad, cursor, w - 2 * pad, block.height)
-        used = typefit.draw_block(draw, block, box, color, align=align, valign=zone.valign)
-        out.append({
-            "role": block.role,
-            "size_px": block.size,
-            "pt": round(block.size * 72 / max(1, dpi), 1),
-            "lines": len(block.lines),
-            "truncated": block.truncated,
-            "zone": [round(zone.x, 4), round(zone.y, 4), round(zone.w, 4), round(zone.h, 4)],
-            "used_px": [round(v, 1) for v in used],
-            "box_px": [round(x + pad, 1), round(y + pad, 1), round(w - 2 * pad, 1), round(h - 2 * pad, 1)],
-            "layer": zone.layer,
-            "color": {"hex": color, "bg": bg_hex,
-                      "contrast": round(typefit.contrast(bg_hex, color), 2)},
-        })
-        cursor += block.height + gap
+def _place_block(draw: ImageDraw.ImageDraw, block, x: float, y: float, w: float, h: float,
+                 pad: float, top: float, color: str, align: str,
+                 out: list[dict[str, Any]], zone: layouts.Zone, dpi: int,
+                 bg_hex: str) -> None:
+    box = (x + pad, y + top, max(1.0, w - 2 * pad), block.height)
+    used = typefit.draw_block(draw, block, box, color, align=align, valign="top")
+    out.append({
+        "role": block.role,
+        "word": block.role,
+        "font": zone.font,
+        "weight": zone.weight,
+        "size": round(zone.size, 4),
+        "requested_px": round(block.requested, 1),
+        "size_px": block.size,
+        "pt": round(block.size * 72 / max(1, dpi), 1),
+        "lines": len(block.lines),
+        "truncated": block.truncated,
+        "shrunk": block.shrunk,
+        "zone": [round(zone.x, 4), round(zone.y, 4), round(zone.w, 4), round(zone.h, 4)],
+        "used_px": [round(v, 1) for v in used],
+        "box_px": [round(x + pad, 1), round(y + top, 1), round(max(1.0, w - 2 * pad), 1), round(h, 1)],
+        "layer": zone.layer,
+        "color": {"hex": color, "bg": bg_hex,
+                  "contrast": round(typefit.contrast(bg_hex, color), 2)},
+    })
 
 
 # -------------------------------------------------------------------- drawing
@@ -436,7 +427,6 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
                  page: str = "front") -> RenderResult:
     if isinstance(design, dict):
         design = layouts.Design.from_dict(design)
-    style = spec.style
     palette = spec.palette
     w_in, h_in = spec.card_inches
     canvas_w, canvas_h, b = canvas_px(spec, dpi, bleed)
@@ -460,16 +450,16 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
 
     decoration = str(chrome.get("decoration") or "none").lower()
     if design.ornaments:
-        _draw_ornaments(canvas, style, palette, trim_w, trim_h, keepout, design, spec.name, ox, oy)
+        _draw_ornaments(canvas, palette, trim_w, trim_h, keepout, design, spec.name, ox, oy)
     if decoration not in ("", "none"):
-        density = float(chrome.get("density", style.density) or 0.0)
-        decorate.decorate(canvas, replace(style, decoration=decoration, density=density), palette,
+        density = float(chrome.get("density", 0.5) or 0.0)
+        decorate.decorate(canvas, decoration, density, palette,
                           trim_w, trim_h, keepout, seed=_seed(spec.name) + 11,
                           offset=(ox, oy))
     border = str(chrome.get("border") or "none").lower()
     if border not in ("", "none") and not bg_facts.get("photo"):
-        decorate.border(canvas, replace(style, border=border), palette, trim_w, trim_h,
-                        style.margin * short, offset=(ox, oy))
+        inset = float(config.limit("margin", "border", 0.055)) * short
+        decorate.border(canvas, border, palette, trim_w, trim_h, inset, offset=(ox, oy))
 
     photo_rects: list[list[int]] = []
     blocks: list[dict[str, Any]] = []
@@ -488,14 +478,15 @@ def render_front(spec: CardSpec, design: layouts.Design | dict[str, Any], dpi: i
         if kind == "shape":
             paint_shape(canvas, item, palette, trim_w, trim_h, ox, oy)
         elif kind == "slot":
-            rect = paint_slot(canvas, spec, item, style, palette, trim_w, trim_h, short, ox, oy, b)
+            rect = paint_slot(canvas, spec, item, palette, trim_w, trim_h, short, ox, oy, b,
+                              float(config.limit("slots", "radius", 0.03)))
             if rect:
                 photo_rects.append(rect)
         elif kind == "line":
             paint_line(canvas, item, palette, trim_w, trim_h, short, ox, oy)
         else:
             blocks.extend(paint_zone(canvas, item, spec, trim_w, trim_h, short, palette,
-                                     style, dpi, ox, oy))
+                                     dpi, ox, oy))
 
     return RenderResult(canvas, {
         "page": page,
@@ -519,20 +510,18 @@ def _seed(name: str) -> int:
     return abs(hash(name)) % 100_000
 
 
-def _draw_ornaments(canvas: Image.Image, style: config.Style, palette: config.Palette,
+def _draw_ornaments(canvas: Image.Image, palette: config.Palette,
                     trim_w: int, trim_h: int, keepout: list[tuple[float, float, float, float]],
                     design: layouts.Design, name: str, ox: int, oy: int) -> None:
     for i, item in enumerate(design.ornaments):
         kind = str(item.get("kind", "none")).lower()
         if kind not in ("holly", "snow", "stars", "confetti"):
             continue
-        density = item.get("density", style.density)
         try:
-            density = max(0.0, min(1.6, float(density)))
+            density = max(0.0, min(1.6, float(item.get("density", 0.5))))
         except (TypeError, ValueError):
-            density = style.density
-        variant = replace(style, decoration=kind, density=density)
-        decorate.decorate(canvas, variant, palette, trim_w, trim_h, keepout,
+            density = 0.5
+        decorate.decorate(canvas, kind, density, palette, trim_w, trim_h, keepout,
                           seed=_seed(name) + 97 * (i + 1), offset=(ox, oy))
 
 

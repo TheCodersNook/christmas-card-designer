@@ -1,9 +1,11 @@
 """The studio rulebook, loaded from studio/rules.json.
 
-Nothing about paper, palette, type or a direction is hardcoded here any more.
-The JSON file is the source of truth: edit it (and studio/RULES.md explains every
-field), restart the command, and the whole engine follows. `config` only turns
-that file into small immutable objects the renderer can use.
+There are no presets here: no named styles, no palette catalogue, no fixed type
+scale. The JSON file says what paper is available, what a palette must satisfy,
+what sizes and weights type may take, which pieces of copy exist, and the limits
+of every primitive. The agent writes the palette, the typography and the
+composition for each card on the fly; `config` only turns the numbers into small
+objects the rest of the engine can use.
 """
 from __future__ import annotations
 
@@ -44,8 +46,8 @@ def _read_rules(path: Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise RulesError(f"{path} is not valid JSON: {exc}") from exc
-    if not isinstance(data, dict) or "paper" not in data or "directions" not in data:
-        raise RulesError(f"{path} must contain 'paper', 'composition', 'type', 'palettes' and 'directions'")
+    if not isinstance(data, dict) or "paper" not in data or "type" not in data:
+        raise RulesError(f"{path} must contain 'paper', 'type', 'palette' and 'composition'")
     return data
 
 
@@ -63,23 +65,27 @@ if not SIZES:
 
 COMPOSE = RULES.get("composition", {})
 TYPE = RULES.get("type", {})
-ROLE_RULES: dict[str, dict[str, Any]] = TYPE.get("roles", {})
-ROLE_SIZES = {role: float(spec.get("scale", 0.03)) for role, spec in ROLE_RULES.items()}
-TEXT_ROLES = ("greeting", "family", "message", "signature", "year")
-DECK_TEXT_ROLES = ("title", "subtitle", "greeting", "message", "signature", "year")
+PALETTE_RULES = RULES.get("palette", {})
+PARTS: dict[str, str] = {
+    str(key): str(value) for key, value in TYPE.get("parts", {}).items()
+}
+TEXT_PARTS = ("greeting", "family", "message", "signature", "year")
+DECK_TEXT_PARTS = ("title", "subtitle", "greeting", "message", "signature", "year")
+PALETTE_KEYS = tuple(str(v) for v in PALETTE_RULES.get(
+    "keys", ["bg", "ink", "soft", "accent", "panel", "on_panel"]))
 CANVAS_16X9 = (40 / 3, 7.5)
 
 
 @dataclass(frozen=True)
 class Palette:
-    key: str
-    label: str
+    """Six colours the agent chose for this card (or that the photographs gave)."""
     bg: str
     ink: str
     soft: str
     accent: str
     panel: str
     on_panel: str
+    label: str = "from your photographs"
 
     def colors(self) -> dict[str, str]:
         return {
@@ -91,79 +97,15 @@ class Palette:
         return getattr(self, name, self.ink)
 
 
-PALETTES: dict[str, Palette] = {
-    str(key): Palette(str(key), str(value.get("label", key)), str(value["bg"]), str(value["ink"]),
-                      str(value["soft"]), str(value["accent"]), str(value["panel"]),
-                      str(value["on_panel"]))
-    for key, value in RULES.get("palettes", {}).items()
-}
-
-
-@dataclass(frozen=True)
-class Style:
-    key: str
-    label: str
-    blurb: str
-    palette: str
-    heading: str
-    body: str
-    script: str
-    greeting_font: str
-    name_font: str
-    caps: bool
-    weight: int
-    tracking: float
-    align: str
-    margin: float
-    decoration: str
-    density: float
-    border: str
-    photo_frame: str
-    radius: float
-    texture: bool
-    guidance: str = ""
-
-
-STYLES: dict[str, Style] = {
-    str(key): Style(
-        key=str(key),
-        label=str(value.get("label", key)),
-        blurb=str(value.get("blurb", "")),
-        palette=str(value.get("palette", "evergreen")),
-        heading=str(value.get("heading", "playfair")),
-        body=str(value.get("body", "lato")),
-        script=str(value.get("script", "greatvibes")),
-        greeting_font=str(value.get("greeting_font", "heading")),
-        name_font=str(value.get("name_font", "heading")),
-        caps=bool(value.get("caps", False)),
-        weight=int(value.get("weight", 500)),
-        tracking=float(value.get("tracking", 0.0)),
-        align=str(value.get("align", "center")),
-        margin=float(value.get("margin", 0.07)),
-        decoration=str(value.get("decoration", "none")),
-        density=float(value.get("density", 0.0)),
-        border=str(value.get("border", "none")),
-        photo_frame=str(value.get("photo_frame", "plain")),
-        radius=float(value.get("radius", 0.0)),
-        texture=bool(value.get("texture", False)),
-        guidance=str(value.get("guidance", "")),
+def palette(data: dict[str, Any] | None, label: str = "yours") -> Palette:
+    """Build a Palette from a validated six-colour mapping."""
+    src = data or {}
+    return Palette(
+        str(src.get("bg", "#FFFFFF")), str(src.get("ink", "#111111")),
+        str(src.get("soft", "#555555")), str(src.get("accent", "#111111")),
+        str(src.get("panel", "#111111")), str(src.get("on_panel", "#FFFFFF")),
+        label,
     )
-    for key, value in RULES.get("directions", {}).items()
-}
-if not STYLES:
-    raise RulesError("studio/rules.json has no directions")
-DIRECTIONS = STYLES
-
-
-def style(key: str | None) -> Style:
-    if key and str(key).lower() in STYLES:
-        return STYLES[str(key).lower()]
-    return next(iter(STYLES.values()))
-
-
-def palette(style_or_key: Style | str | None) -> Palette:
-    key = style_or_key.palette if isinstance(style_or_key, Style) else (style_or_key or "evergreen")
-    return PALETTES.get(str(key).lower(), next(iter(PALETTES.values())))
 
 
 def size(key: str | None) -> tuple[float, float]:
@@ -176,9 +118,13 @@ def size_label(key: str, landscape: bool = False) -> str:
     return f"{w:g} x {h:g} in"
 
 
-def role_rules(role: str) -> dict[str, Any]:
-    return ROLE_RULES.get(role, {"scale": 0.03, "max_lines": 4, "spacing": 1.4})
-
-
 def limit(section: str, key: str, default: Any) -> Any:
     return COMPOSE.get(section, {}).get(key, default)
+
+
+def type_limit(key: str, default: Any) -> Any:
+    return TYPE.get(key, default)
+
+
+def part_description(part: str) -> str:
+    return PARTS.get(part, "")
