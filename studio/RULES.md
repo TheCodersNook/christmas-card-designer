@@ -377,7 +377,7 @@ are notes with numbers.
 | `photos.coverage` | warn/error | below the minimum (warn) or above the maximum (error) |
 | `overlap.text_photo` | error | text sits on a photograph without `over_photo` |
 | `overlap.same` | error | two zones overlap, or two slots overlap on the same layer |
-| `background.*` | error | unknown background photo, colour, scrim value or direction |
+| `background.*` | error | unknown background photo, colour, scrim edge or colour |
 | `shapes.*` | error | unknown shape, fill, opacity, rotation or layer |
 | `palette.keys` | error | the system palette is not six valid `#hex` colours |
 | `palette.contrast` | warn/error | ink or panel type is not readable enough |
